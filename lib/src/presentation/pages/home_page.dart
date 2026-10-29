@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 import '../../core/theme/index.dart';
 import '../../domain/entities/branch.dart';
+import '../../domain/entities/activity.dart';
 import '../../domain/entities/user_profile.dart';
 import '../providers/app_providers.dart';
 import '../widgets/branch_card.dart';
@@ -494,22 +496,22 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget _buildCoreStats(AsyncValue<UserProfile?> profileAsync) {
     final stats = profileAsync.when(
       data: (p) => p?.coreStats ?? {
-        'energy': 94,
-        'willpower': 88,
-        'synapse': 76,
-        'cyberware': 92,
+        'energy': 0,
+        'willpower': 0,
+        'synapse': 0,
+        'cyberware': 0,
       },
       loading: () => {
-        'energy': 94,
-        'willpower': 88,
-        'synapse': 76,
-        'cyberware': 92,
+        'energy': 0,
+        'willpower': 0,
+        'synapse': 0,
+        'cyberware': 0,
       },
       error: (_, __) => {
-        'energy': 94,
-        'willpower': 88,
-        'synapse': 76,
-        'cyberware': 92,
+        'energy': 0,
+        'willpower': 0,
+        'synapse': 0,
+        'cyberware': 0,
       },
     );
 
@@ -584,6 +586,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _buildBranchCarousel(List<Branch> branches, int selectedIndex) {
+    if (branches.isEmpty) {
+      return _buildEmptyBranches();
+    }
     return SizedBox(
       height: 320,
       child: PageView.builder(
@@ -606,6 +611,43 @@ class _HomePageState extends ConsumerState<HomePage> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildEmptyBranches() {
+    return SizedBox(
+      height: 320,
+      child: Center(
+        child: Container(
+          width: 280,
+          padding: const EdgeInsets.all(32),
+          child: CyberCard(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.hub, color: AppColors.mutedAlloyText, size: 48),
+                const SizedBox(height: 16),
+                Text(
+                  'NO SKILL TREES INITIALIZED',
+                  style: AppTextStyles.headlineSmall.copyWith(color: AppColors.mutedAlloyText),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Create your first branch in the Config module',
+                  style: AppTextStyles.bodyMedium.copyWith(color: AppColors.onSurfaceVariant),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                QuickActionButton(
+                  label: '+ CREATE BRANCH',
+                  icon: Icons.add,
+                  onPressed: () => _showCreateBranchDialog(context),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -653,84 +695,124 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _buildActivitiesHeader() {
+    final branchesAsync = ref.watch(branchesProvider);
+    final selectedIndex = ref.watch(selectedBranchIndexProvider);
+    
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Row(
-        children: [
-          const Icon(Icons.offline_bolt, color: AppColors.electricCyan, size: 22),
-          const SizedBox(width: 8),
-          Text(
-            'ACTIVITIES IN QUEUE',
-            style: AppTextStyles.headlineSmall,
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: AppColors.electricCyan.withOpacity(0.2),
-              border: Border.all(color: AppColors.electricCyan, width: 1),
-            ),
-            child: Text(
-              '3 READY',
-              style: AppTextStyles.hudMetricSmall.copyWith(color: AppColors.electricCyan),
-            ),
-          ),
-          const Spacer(),
-          TextButton(
-            onPressed: () {},
-            child: Text(
-              'HISTORY',
-              style: AppTextStyles.labelSmallUpper.copyWith(
-                color: AppColors.highVoltageYellow,
+      child: branchesAsync.when(
+        data: (branches) {
+          if (branches.isEmpty || selectedIndex >= branches.length) {
+            return Row(
+              children: [
+                const Icon(Icons.offline_bolt, color: AppColors.electricCyan, size: 22),
+                const SizedBox(width: 8),
+                Text(
+                  'ACTIVITIES IN QUEUE',
+                  style: AppTextStyles.headlineSmall,
+                ),
+              ],
+            );
+          }
+          final selectedBranch = branches[selectedIndex];
+          return Row(
+            children: [
+              const Icon(Icons.offline_bolt, color: AppColors.electricCyan, size: 22),
+              const SizedBox(width: 8),
+              Text(
+                'ACTIVITIES IN QUEUE',
+                style: AppTextStyles.headlineSmall,
               ),
-            ),
-          ),
-        ],
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.electricCyan.withValues(alpha: 0.2),
+                  border: Border.all(color: AppColors.electricCyan, width: 1),
+                ),
+                child: FutureBuilder<List<Activity>>(
+                  future: ref.read(getActivitiesUseCaseProvider).call(selectedBranch.id),
+                  builder: (context, snapshot) {
+                    final count = snapshot.data?.length ?? 0;
+                    return Text(
+                      '$count READY',
+                      style: AppTextStyles.hudMetricSmall.copyWith(color: AppColors.electricCyan),
+                    );
+                  },
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: () {
+                  // Navigate to activity page for this branch
+                },
+                child: Text(
+                  'HISTORY',
+                  style: AppTextStyles.labelSmallUpper.copyWith(
+                    color: AppColors.highVoltageYellow,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+        loading: () => const SizedBox.shrink(),
+        error: (_, __) => const SizedBox.shrink(),
       ),
     );
   }
 
   Widget _buildActivitiesList(Branch branch) {
-    // Sample activities for demo - in real app would come from activitiesProvider
-    return Column(
-      children: [
-        ActivityItem(
-          name: 'Push-ups Protocol',
-          description: '3 Sets × 25 Tactical Repetitions',
-          category: 'STRENGTH',
-          categoryColor: AppColors.electricCyan,
-          icon: Icons.sports_martial_arts,
-          iconColor: AppColors.electricCyan,
-          xpReward: 45,
-          statReward: '+2 POWER',
-          statColor: AppColors.electricCyan,
-          onRecord: () {},
+    final activitiesAsync = ref.watch(activitiesProvider(branch.id));
+    
+    return activitiesAsync.when(
+      data: (activities) {
+        if (activities.isEmpty) {
+          return _buildEmptyActivitiesForBranch(branch);
+        }
+        return Column(
+          children: activities.map((activity) => ActivityItem(
+            name: activity.name,
+            description: activity.description,
+            category: activity.category,
+            categoryColor: activity.accentColor,
+            icon: activity.icon,
+            iconColor: activity.accentColor,
+            xpReward: activity.baseXp,
+            statReward: '+2 ${activity.category.toUpperCase()}',
+            statColor: activity.accentColor,
+            onRecord: () => _recordActivity(activity),
+            onSync: () => _syncActivity(activity),
+          )).toList(),
+        );
+      },
+      loading: () => _buildActivitiesSkeleton(),
+      error: (e, _) => _buildErrorState(e.toString()),
+    );
+  }
+
+  Widget _buildEmptyActivitiesForBranch(Branch branch) {
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(32),
+      child: CyberCard(
+        child: Column(
+          children: [
+            const Icon(Icons.add_task, color: AppColors.mutedAlloyText, size: 48),
+            const SizedBox(height: 16),
+            Text(
+              'NO ACTIVITIES IN ${branch.name.toUpperCase()}',
+              style: AppTextStyles.headlineSmall.copyWith(color: AppColors.mutedAlloyText),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Add activities in the Config module to start tracking',
+              style: AppTextStyles.bodyMedium.copyWith(color: AppColors.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
-        ActivityItem(
-          name: 'High-Velocity Neon Run',
-          description: 'Distance Goal: 5.0 KM • Cyber Pacing',
-          category: 'CARDIO',
-          categoryColor: AppColors.highVoltageYellow,
-          icon: Icons.directions_run,
-          iconColor: AppColors.highVoltageYellow,
-          xpReward: 80,
-          statReward: '+5 STAMINA',
-          statColor: AppColors.highVoltageYellow,
-          onSync: () {},
-        ),
-        ActivityItem(
-          name: 'Heavy Core Plank',
-          description: 'Isometric Hold • 3 Minutes Constant Tension',
-          category: 'ENDURANCE',
-          categoryColor: AppColors.electricCyan,
-          icon: Icons.timer,
-          iconColor: AppColors.electricCyan,
-          xpReward: 35,
-          statReward: '+1 WILLPOWER',
-          statColor: AppColors.highVoltageYellow,
-          onRecord: () {},
-        ),
-      ],
+      ),
     );
   }
 
@@ -800,6 +882,35 @@ class _HomePageState extends ConsumerState<HomePage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _QuickEntryModal(),
+    );
+  }
+
+  void _showCreateBranchDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => _CreateBranchDialog(),
+    );
+  }
+
+  void _recordActivity(Activity activity) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Record ${activity.name}', style: AppTextStyles.bodyMedium),
+        backgroundColor: AppColors.surfaceContainerHigh,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  void _syncActivity(Activity activity) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Sync ${activity.name}', style: AppTextStyles.bodyMedium),
+        backgroundColor: AppColors.surfaceContainerHigh,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
     );
   }
 }
@@ -1477,7 +1588,7 @@ class _QuickBoostButton extends StatelessWidget {
             color: isMax ? AppColors.highVoltageYellow : AppColors.brushedMetallicTrim,
             width: isMax ? 1.5 : 1,
           ),
-          backgroundColor: isMax ? AppColors.highVoltageYellow.withOpacity(0.1) : null,
+          backgroundColor: isMax ? AppColors.highVoltageYellow.withValues(alpha: 0.1) : null,
         ),
         child: Text(
           label,
@@ -1488,5 +1599,348 @@ class _QuickBoostButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _CreateBranchDialog extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_CreateBranchDialog> createState() => _CreateBranchDialogState();
+}
+
+class _CreateBranchDialogState extends ConsumerState<_CreateBranchDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  Color _selectedColor = AppColors.electricCyan;
+  IconData _selectedIcon = Icons.hub;
+  bool _isSubmitting = false;
+
+  final List<Color> _availableColors = [
+    AppColors.electricCyan,
+    AppColors.highVoltageYellow,
+    AppColors.electricViolet,
+    AppColors.overloadCrimson,
+  ];
+
+  final List<IconData> _availableIcons = [
+    Icons.hub,
+    Icons.fitness_center,
+    Icons.code,
+    Icons.psychology,
+    Icons.favorite,
+    Icons.sync,
+    Icons.bolt,
+    Icons.auto_awesome,
+  ];
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Container(
+        width: double.maxFinite,
+        constraints: const BoxConstraints(maxWidth: 400),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceContainerHigh,
+          border: Border.all(color: AppColors.electricCyan, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.electricCyan.withValues(alpha: 0.3),
+              blurRadius: 24,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: AppColors.primaryActionGradient,
+                border: Border(
+                  bottom: BorderSide(color: AppColors.electricCyan, width: 2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.add_task, color: AppColors.coreVoid, size: 28),
+                  const SizedBox(width: 12),
+                  Text(
+                    'INITIALIZE SKILL TREE',
+                    style: AppTextStyles.headlineSmall.copyWith(
+                      color: AppColors.coreVoid,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Form
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Name
+                    Text('BRANCH DESIGNATION', style: AppTextStyles.labelSmallUpper.copyWith(color: AppColors.electricCyan)),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: _nameController,
+                      style: AppTextStyles.bodyLarge.copyWith(color: AppColors.onSurface),
+                      decoration: InputDecoration(
+                        hintText: 'e.g., Physical Development',
+                        hintStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.onSurfaceVariant),
+                        filled: true,
+                        fillColor: AppColors.surfaceContainerLowest,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: AppColors.brushedMetallicTrim),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: AppColors.electricCyan, width: 2),
+                        ),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Branch name is required';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    // Description
+                    Text('SYSTEM DESCRIPTION', style: AppTextStyles.labelSmallUpper.copyWith(color: AppColors.electricCyan)),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: _descriptionController,
+                      maxLines: 3,
+                      style: AppTextStyles.bodyLarge.copyWith(color: AppColors.onSurface),
+                      decoration: InputDecoration(
+                        hintText: 'e.g., Strength, endurance, and vitality protocols',
+                        hintStyle: AppTextStyles.bodyMedium.copyWith(color: AppColors.onSurfaceVariant),
+                        filled: true,
+                        fillColor: AppColors.surfaceContainerLowest,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: AppColors.brushedMetallicTrim),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: AppColors.electricCyan, width: 2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Color selection
+                    Text('ACCENT COLOR', style: AppTextStyles.labelSmallUpper.copyWith(color: AppColors.electricCyan)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _availableColors.map((color) {
+                        final isSelected = color == _selectedColor;
+                        return GestureDetector(
+                          onTap: () => setState(() => _selectedColor = color),
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: color,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: isSelected ? AppColors.highVoltageYellow : Colors.transparent,
+                                width: 3,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: color.withValues(alpha: 0.5),
+                                  blurRadius: 8,
+                                ),
+                              ],
+                            ),
+                            child: isSelected
+                                ? const Icon(Icons.check, color: AppColors.coreVoid, size: 24)
+                                : null,
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    // Icon selection
+                    Text('NEURAL ICON', style: AppTextStyles.labelSmallUpper.copyWith(color: AppColors.electricCyan)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _availableIcons.map((icon) {
+                        final isSelected = icon == _selectedIcon;
+                        return GestureDetector(
+                          onTap: () => setState(() => _selectedIcon = icon),
+                          child: Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceContainerLowest,
+                              border: Border.all(
+                                color: isSelected ? AppColors.electricCyan : AppColors.brushedMetallicTrim,
+                                width: isSelected ? 2 : 1,
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              icon,
+                              color: isSelected ? _selectedColor : AppColors.onSurfaceVariant,
+                              size: 24,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 24),
+                    // Actions
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              side: BorderSide(color: AppColors.brushedMetallicTrim),
+                            ),
+                            child: Text(
+                              'CANCEL',
+                              style: AppTextStyles.labelLargeUpper,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: _isSubmitting ? null : _createBranch,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.transparent,
+                              shadowColor: Colors.transparent,
+                              padding: EdgeInsets.zero,
+                              shape: const ContinuousRectangleBorder(
+                                borderRadius: BorderRadius.zero,
+                              ),
+                            ),
+                            child: Ink(
+                              decoration: BoxDecoration(
+                                gradient: AppColors.primaryActionGradient,
+                                border: Border.all(color: AppColors.electricCyan, width: 1.5),
+                              ),
+                              child: Container(
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                child: _isSubmitting
+                                    ? const SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: AppColors.coreVoid,
+                                        ),
+                                      )
+                                    : Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(Icons.electric_bolt, color: AppColors.coreVoid, size: 22),
+                                          const SizedBox(width: 12),
+                                          Text(
+                                            'INITIALIZE BRANCH',
+                                            style: AppTextStyles.labelLargeUpper.copyWith(
+                                              color: AppColors.coreVoid,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          const Icon(Icons.keyboard_double_arrow_right, color: AppColors.coreVoid, size: 22),
+                                        ],
+                                      ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _createBranch() async {
+    if (!_formKey.currentState!.validate()) return;
+    
+    setState(() => _isSubmitting = true);
+    
+    try {
+      final createBranchUseCase = ref.read(createBranchUseCaseProvider);
+      final branch = Branch(
+        id: Uuid().v4(),
+        name: _nameController.text.trim(),
+        description: _descriptionController.text.trim(),
+        accentColor: _selectedColor,
+        icon: _selectedIcon,
+        level: 1,
+        currentXp: 0,
+        xpToNextLevel: 5000,
+        weight: 1.0,
+        isActive: true,
+        sortOrder: 0,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+        activities: [],
+        metadata: {},
+      );
+      
+      await createBranchUseCase.call(branch);
+      
+      if (mounted) {
+        Navigator.pop(context);
+        // Show success toast
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Branch "${branch.name}" initialized', style: AppTextStyles.bodyMedium),
+            backgroundColor: AppColors.surfaceContainerHigh,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create branch: $e', style: AppTextStyles.bodyMedium),
+            backgroundColor: AppColors.overloadCrimson,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 }

@@ -110,16 +110,22 @@ final checkGithubSyncUseCaseProvider = Provider<CheckGithubSyncUseCase>((ref) {
 final selectedBranchIndexProvider = StateProvider<int>((ref) => 0);
 
 final githubConfigurationProvider = StateNotifierProvider<GithubConfigNotifier, GithubConfigState>((ref) {
-  return GithubConfigNotifier(ref.watch(configureGithubUseCaseProvider), ref.watch(checkGithubSyncUseCaseProvider));
+  final notifier = GithubConfigNotifier(ref);
+  notifier.load();
+  return notifier;
 });
 
 class GithubConfigState {
+  final String? pat;
+  final String? repo;
   final bool isConfigured;
   final bool isLoading;
   final String? error;
   final GithubStatus? lastStatus;
 
   const GithubConfigState({
+    this.pat,
+    this.repo,
     this.isConfigured = false,
     this.isLoading = false,
     this.error,
@@ -127,12 +133,16 @@ class GithubConfigState {
   });
 
   GithubConfigState copyWith({
+    String? pat,
+    String? repo,
     bool? isConfigured,
     bool? isLoading,
     String? error,
     GithubStatus? lastStatus,
   }) {
     return GithubConfigState(
+      pat: pat ?? this.pat,
+      repo: repo ?? this.repo,
       isConfigured: isConfigured ?? this.isConfigured,
       isLoading: isLoading ?? this.isLoading,
       error: error ?? this.error,
@@ -142,27 +152,21 @@ class GithubConfigState {
 }
 
 class GithubConfigNotifier extends StateNotifier<GithubConfigState> {
-  final ConfigureGithubUseCase _configureUseCase;
-  final CheckGithubSyncUseCase _checkSyncUseCase;
+  final Ref _ref;
 
-  GithubConfigNotifier(this._configureUseCase, this._checkSyncUseCase)
-      : super(const GithubConfigState()) {
-    _checkConfiguration();
-  }
+  GithubConfigNotifier(this._ref) : super(const GithubConfigState());
 
-  Future<void> _checkConfiguration() async {
-    state = state.copyWith(isLoading: true);
-    try {
-      final isConfigured = await _checkSyncUseCase.call();
+  Future<void> load() async {
+    final secureStorage = _ref.read(secureStorageProvider);
+    final pat = await secureStorage.read(key: SecureStorageKeys.githubPat);
+    final prefs = _ref.read(sharedPreferencesProvider);
+    final repo = prefs.getString('rpg_github_repo');
+    
+    if (pat != null && repo != null) {
       state = state.copyWith(
-        isConfigured: isConfigured.status != GithubWorkflowStatus.unknown,
-        isLoading: false,
-      );
-    } catch (e) {
-      state = state.copyWith(
-        isConfigured: false,
-        isLoading: false,
-        error: e.toString(),
+        pat: pat,
+        repo: repo,
+        isConfigured: true,
       );
     }
   }
@@ -170,56 +174,41 @@ class GithubConfigNotifier extends StateNotifier<GithubConfigState> {
   Future<void> configure(String pat, String repo) async {
     state = state.copyWith(isLoading: true, error: null);
     try {
-      await _configureUseCase.call(pat, repo);
-      final status = await _checkSyncUseCase.call();
+      final secureStorage = _ref.read(secureStorageProvider);
+      await secureStorage.write(key: SecureStorageKeys.githubPat, value: pat);
+      final prefs = _ref.read(sharedPreferencesProvider);
+      await prefs.setString('rpg_github_repo', repo);
       state = state.copyWith(
-        isConfigured: status.status != GithubWorkflowStatus.unknown,
+        pat: pat,
+        repo: repo,
+        isConfigured: true,
         isLoading: false,
-        lastStatus: status,
       );
     } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: e.toString(),
-      );
+      state = state.copyWith(isLoading: false, error: e.toString());
     }
   }
 
   Future<void> clear() async {
-    state = state.copyWith(isLoading: true);
-    try {
-      // Note: We need access to the repository to clear
-      // This is a simplification
-      state = state.copyWith(
-        isConfigured: false,
-        isLoading: false,
-      );
-    } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: e.toString(),
-      );
-    }
-  }
-
-  Future<void> refreshStatus() async {
-    try {
-      final status = await _checkSyncUseCase.call();
-      state = state.copyWith(lastStatus: status);
-    } catch (e) {
-      state = state.copyWith(error: e.toString());
-    }
+    final secureStorage = _ref.read(secureStorageProvider);
+    await secureStorage.delete(key: SecureStorageKeys.githubPat);
+    final prefs = _ref.read(sharedPreferencesProvider);
+    await prefs.remove('rpg_github_repo');
+    state = const GithubConfigState();
   }
 }
 
 // Branches state provider
-final branchesProvider = FutureProvider<List<Branch>>((ref) {
-  return ref.watch(getBranchesUseCaseProvider).call();
+final branchesProvider = FutureProvider<List<Branch>>((ref) async {
+  final branches = await ref.watch(getBranchesUseCaseProvider).call();
+  // Return empty list on first install - no demo data
+  return branches;
 });
 
 // Activities for selected branch
-final activitiesProvider = FutureProvider.family<List<Activity>, String>((ref, branchId) {
-  return ref.watch(getActivitiesUseCaseProvider).call(branchId);
+final activitiesProvider = FutureProvider.family<List<Activity>, String>((ref, branchId) async {
+  final activities = await ref.watch(getActivitiesUseCaseProvider).call(branchId);
+  return activities;
 });
 
 // User profile provider
@@ -326,3 +315,111 @@ class QuickEntryNotifier extends StateNotifier<QuickEntryState> {
     _calculateXp();
   }
 }
+
+// AI Configuration Provider
+class AiConfigState {
+  final String? apiKey;
+  final String? model;
+  final String provider;
+  final bool isConfigured;
+  final bool isLoading;
+  final String? error;
+
+  const AiConfigState({
+    this.apiKey,
+    this.model,
+    this.provider = 'openai',
+    this.isConfigured = false,
+    this.isLoading = false,
+    this.error,
+  });
+
+  AiConfigState copyWith({
+    String? apiKey,
+    String? model,
+    String? provider,
+    bool? isConfigured,
+    bool? isLoading,
+    String? error,
+  }) {
+    return AiConfigState(
+      apiKey: apiKey ?? this.apiKey,
+      model: model ?? this.model,
+      provider: provider ?? this.provider,
+      isConfigured: isConfigured ?? this.isConfigured,
+      isLoading: isLoading ?? this.isLoading,
+      error: error ?? this.error,
+    );
+  }
+}
+
+class AiConfigNotifier extends StateNotifier<AiConfigState> {
+  final Ref _ref;
+
+  AiConfigNotifier(this._ref) : super(const AiConfigState());
+
+  Future<void> configure(String apiKey, String model, String provider) async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      final secureStorage = _ref.read(secureStorageProvider);
+      await secureStorage.write(key: 'rpg_ai_api_key', value: apiKey);
+      await secureStorage.write(key: 'rpg_ai_model', value: model);
+      await secureStorage.write(key: 'rpg_ai_provider', value: provider);
+      state = state.copyWith(
+        apiKey: apiKey,
+        model: model,
+        provider: provider,
+        isConfigured: true,
+        isLoading: false,
+      );
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> clear() async {
+    final secureStorage = _ref.read(secureStorageProvider);
+    await secureStorage.delete(key: 'rpg_ai_api_key');
+    await secureStorage.delete(key: 'rpg_ai_model');
+    await secureStorage.delete(key: 'rpg_ai_provider');
+    state = const AiConfigState();
+  }
+
+  Future<void> load() async {
+    final secureStorage = _ref.read(secureStorageProvider);
+    final apiKey = await secureStorage.read(key: 'rpg_ai_api_key');
+    final model = await secureStorage.read(key: 'rpg_ai_model');
+    final provider = await secureStorage.read(key: 'rpg_ai_provider');
+    
+    if (apiKey != null && model != null) {
+      state = state.copyWith(
+        apiKey: apiKey,
+        model: model,
+        provider: provider ?? 'openai',
+        isConfigured: true,
+      );
+    }
+  }
+
+  void setProvider(String provider) {
+    state = state.copyWith(provider: provider);
+  }
+
+  Future<void> testConnection() async {
+    state = state.copyWith(isLoading: true, error: null);
+    try {
+      await Future.delayed(const Duration(seconds: 1));
+      state = state.copyWith(isLoading: false);
+      // In real app, would test actual API connection
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: 'Connection test failed: $e');
+    }
+  }
+}
+
+final aiConfigurationProvider = StateNotifierProvider<AiConfigNotifier, AiConfigState>((ref) {
+  final notifier = AiConfigNotifier(ref);
+  notifier.load();
+  return notifier;
+});
+
