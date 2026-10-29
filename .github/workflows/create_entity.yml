@@ -1,0 +1,99 @@
+name: Create Entity
+
+on:
+  repository_dispatch:
+    types: [create_branch, create_activity, create_record]
+  workflow_dispatch:
+    inputs:
+      entity_type:
+        description: 'Type of entity to create (branch, activity, record)'
+        required: true
+        type: choice
+        options:
+          - branch
+          - activity
+          - record
+      entity_id:
+        description: 'Unique ID of the entity'
+        required: true
+        type: string
+      payload:
+        description: 'JSON payload for the entity'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  audit-and-create:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run audit script
+        id: audit
+        run: |
+          python .github/scripts/audit_entity.py \
+            --event-type "${{ github.event_name }}" \
+            --entity-type "${{ github.event.inputs.entity_type || github.event.client_payload.entity_type }}" \
+            --entity-id "${{ github.event.inputs.entity_id || github.event.client_payload.entity_id }}" \
+            --payload '${{ github.event.inputs.payload || github.event.client_payload.payload }}'
+
+      - name: Update status file
+        if: always()
+        run: |
+          STATUS="${{ steps.audit.outputs.status }}"
+          MESSAGE="${{ steps.audit.outputs.message }}"
+          ENTITY_TYPE="${{ github.event.inputs.entity_type || github.event.client_payload.entity_type }}"
+          ENTITY_ID="${{ github.event.inputs.entity_id || github.event.client_payload.entity_id }}"
+          
+          cat > .rpg_status.json <<EOF
+          {
+            "workflow_run_id": "${{ github.run_id }}",
+            "status": "$STATUS",
+            "entity_type": "$ENTITY_TYPE",
+            "entity_id": "$ENTITY_ID",
+            "message": "$MESSAGE",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "details": {
+              "run_id": "${{ github.run_id }}",
+              "run_number": "${{ github.run_number }}",
+              "actor": "${{ github.actor }}"
+            }
+          }
+          EOF
+
+      - name: Commit and push changes
+        if: steps.audit.outputs.status == 'SUCCESS'
+        run: |
+          git add -A
+          git commit -m "feat: add ${{ github.event.inputs.entity_type || github.event.client_payload.entity_type }} ${{ github.event.inputs.entity_id || github.event.client_payload.entity_id }}" || echo "No changes to commit"
+          git push
+
+      - name: Push status file
+        if: always()
+        run: |
+          git add .rpg_status.json
+          git commit -m "chore: update status for ${{ github.event.inputs.entity_type || github.event.client_payload.entity_type }} ${{ github.event.inputs.entity_id || github.event.client_payload.entity_id }}" || echo "No status changes"
+          git push
