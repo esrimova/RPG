@@ -9,7 +9,6 @@ import '../providers/app_providers.dart';
 import '../widgets/branch_card.dart';
 import '../widgets/activity_item.dart';
 import '../widgets/stat_pod.dart';
-import '../widgets/module_header.dart';
 import '../widgets/quick_action_button.dart';
 
 class HomePage extends ConsumerStatefulWidget {
@@ -224,7 +223,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
           const SizedBox(width: 8),
           Text(
-            'CORE OVERCLOCKED',
+            'DAILY PROGRESS',
             style: AppTextStyles.labelSmallUpper.copyWith(
               color: AppColors.highVoltageYellow,
             ),
@@ -234,10 +233,24 @@ class _HomePageState extends ConsumerState<HomePage> {
             children: [
               const Icon(Icons.local_fire_department, color: AppColors.highVoltageYellow, size: 16),
               const SizedBox(width: 4),
-              Text(
-                '14-DAY OVERCLOCK STREAK',
-                style: AppTextStyles.hudMetricSmall.copyWith(
-                  color: AppColors.highVoltageYellow,
+              profileAsync.when(
+                data: (profile) => Text(
+                  profile?.currentStreak != null && profile!.currentStreak > 0 ? '${profile.currentStreak}-DAY STREAK' : 'NO STREAK',
+                  style: AppTextStyles.hudMetricSmall.copyWith(
+                    color: AppColors.highVoltageYellow,
+                  ),
+                ),
+                loading: () => Text(
+                  '...',
+                  style: AppTextStyles.hudMetricSmall.copyWith(
+                    color: AppColors.highVoltageYellow,
+                  ),
+                ),
+                error: (_, __) => Text(
+                  'NO STREAK',
+                  style: AppTextStyles.hudMetricSmall.copyWith(
+                    color: AppColors.highVoltageYellow,
+                  ),
                 ),
               ),
             ],
@@ -262,7 +275,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           Row(
             children: [
               Text(
-                '// OPERATOR_STATUS: ACTIVE',
+                'YOUR PROFILE',
                 style: AppTextStyles.labelSmallUpper.copyWith(
                   color: AppColors.electricCyan,
                 ),
@@ -276,19 +289,19 @@ class _HomePageState extends ConsumerState<HomePage> {
                 ),
                 child: profileAsync.when(
                   data: (profile) => Text(
-                    'STAGE_0${(profile?.level ?? 1).clamp(1, 9)} // ${profile?.title ?? 'INITIATE'}',
+                    'LEVEL ${profile?.level ?? 1}',
                     style: AppTextStyles.labelSmallUpper.copyWith(
                       color: AppColors.highVoltageYellow,
                     ),
                   ),
                   loading: () => Text(
-                    'STAGE_01 // INITIATE',
+                    'LEVEL 1',
                     style: AppTextStyles.labelSmallUpper.copyWith(
                       color: AppColors.highVoltageYellow,
                     ),
                   ),
                   error: (_, __) => Text(
-                    'STAGE_01 // INITIATE',
+                    'LEVEL 1',
                     style: AppTextStyles.labelSmallUpper.copyWith(
                       color: AppColors.highVoltageYellow,
                     ),
@@ -327,19 +340,19 @@ class _HomePageState extends ConsumerState<HomePage> {
                       children: [
                         profileAsync.when(
                           data: (profile) => Text(
-                            profile?.displayName.toUpperCase() ?? 'V-NEXUS',
+                            profile?.displayName?.toUpperCase() ?? 'USER',
                             style: AppTextStyles.headlineMedium.copyWith(
                               color: AppColors.electricCyan,
                             ),
                           ),
                           loading: () => Text(
-                            'V-NEXUS',
+                            'USER',
                             style: AppTextStyles.headlineMedium.copyWith(
                               color: AppColors.electricCyan,
                             ),
                           ),
                           error: (_, __) => Text(
-                            'V-NEXUS',
+                            'USER',
                             style: AppTextStyles.headlineMedium.copyWith(
                               color: AppColors.electricCyan,
                             ),
@@ -347,7 +360,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          '#NX-8082',
+                          profileAsync.value?.username != null ? '@${profileAsync.value!.username}' : '',
                           style: AppTextStyles.labelSmall.copyWith(
                             color: AppColors.onSurfaceVariant,
                           ),
@@ -356,19 +369,19 @@ class _HomePageState extends ConsumerState<HomePage> {
                     ),
                     profileAsync.when(
                       data: (profile) => Text(
-                        'LVL ${profile?.level ?? 1} • ${profile?.title ?? 'CYBER TITAN'}',
+                        'LEVEL ${profile?.level ?? 1} • ${profile?.title ?? 'Beginner'}',
                         style: AppTextStyles.labelMediumUpper.copyWith(
                           color: AppColors.highVoltageYellow,
                         ),
                       ),
                       loading: () => Text(
-                        'LVL 1 • INITIATE',
+                        'LEVEL 1 • BEGINNER',
                         style: AppTextStyles.labelMediumUpper.copyWith(
                           color: AppColors.highVoltageYellow,
                         ),
                       ),
                       error: (_, __) => Text(
-                        'LVL 1 • INITIATE',
+                        'LEVEL 1 • BEGINNER',
                         style: AppTextStyles.labelMediumUpper.copyWith(
                           color: AppColors.highVoltageYellow,
                         ),
@@ -377,10 +390,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        const Icon(Icons.memory, color: AppColors.electricCyan, size: 16),
+                        const Icon(Icons.trending_up, color: AppColors.electricCyan, size: 16),
                         const SizedBox(width: 6),
                         Text(
-                          'Neural Matrix: Optimal State (99.4%)',
+                          profileAsync.value?.currentXp != null ? '${profileAsync.value!.currentXp} XP' : '0 XP',
                           style: AppTextStyles.bodySmall.copyWith(
                             color: AppColors.onSurfaceVariant,
                           ),
@@ -414,7 +427,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'NEURAL WATTAGE (XP)',
+                'XP PROGRESS',
                 style: AppTextStyles.labelSmallUpper.copyWith(
                   color: AppColors.onSurfaceVariant,
                 ),
@@ -483,9 +496,9 @@ class _HomePageState extends ConsumerState<HomePage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('LVL ${profileAsync.value?.level ?? 1} INIT', style: AppTextStyles.labelSmall.copyWith(color: AppColors.outline)),
-              Text('⚡ +${(profileAsync.value?.xpToNextLevel ?? 1000) - (profileAsync.value?.currentXp ?? 0)} XP TO ASCENSION', style: AppTextStyles.labelSmallUpper.copyWith(color: AppColors.electricCyan)),
-              Text('LVL ${(profileAsync.value?.level ?? 1) + 1}', style: AppTextStyles.labelSmall.copyWith(color: AppColors.outline)),
+              Text('LEVEL ${profileAsync.value?.level ?? 1}', style: AppTextStyles.labelSmall.copyWith(color: AppColors.outline)),
+              Text('${(profileAsync.value?.xpToNextLevel ?? 1000) - (profileAsync.value?.currentXp ?? 0)} XP TO NEXT LEVEL', style: AppTextStyles.labelSmallUpper.copyWith(color: AppColors.electricCyan)),
+              Text('LEVEL ${(profileAsync.value?.level ?? 1) + 1}', style: AppTextStyles.labelSmall.copyWith(color: AppColors.outline)),
             ],
           ),
         ],
@@ -527,7 +540,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         children: [
           StatPod(
             icon: Icons.bolt,
-            label: 'ENERGY RESERVES',
+            label: 'ENERGY',
             value: '${stats['energy']}%',
             iconColor: AppColors.electricCyan,
             valueColor: AppColors.electricCyan,
@@ -535,7 +548,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
           StatPod(
             icon: Icons.favorite,
-            label: 'WILLPOWER CORE',
+            label: 'WILLPOWER',
             value: '${stats['willpower']}%',
             iconColor: AppColors.highVoltageYellow,
             valueColor: AppColors.highVoltageYellow,
@@ -543,7 +556,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
           StatPod(
             icon: Icons.psychology,
-            label: 'SYNAPSE POWER',
+            label: 'FOCUS',
             value: '${stats['synapse']}%',
             iconColor: AppColors.electricViolet,
             valueColor: AppColors.electricViolet,
@@ -551,7 +564,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
           StatPod(
             icon: Icons.sync,
-            label: 'CYBERWARE SYNC',
+            label: 'CONSISTENCY',
             value: '${stats['cyberware']}%',
             iconColor: AppColors.electricCyan,
             valueColor: AppColors.electricCyan,
@@ -570,12 +583,12 @@ class _HomePageState extends ConsumerState<HomePage> {
           const Icon(Icons.hub, color: AppColors.highVoltageYellow, size: 20),
           const SizedBox(width: 8),
           Text(
-            'NEURAL SKILL TREES',
+            'SKILL BRANCHES',
             style: AppTextStyles.headlineSmall,
           ),
           const Spacer(),
           Text(
-            '4 ACTIVE NODES',
+            'ACTIVE BRANCHES',
             style: AppTextStyles.labelSmallUpper.copyWith(
               color: AppColors.electricCyan,
             ),
@@ -705,10 +718,10 @@ class _HomePageState extends ConsumerState<HomePage> {
           if (branches.isEmpty || selectedIndex >= branches.length) {
             return Row(
               children: [
-                const Icon(Icons.offline_bolt, color: AppColors.electricCyan, size: 22),
+                const Icon(Icons.list_alt, color: AppColors.electricCyan, size: 22),
                 const SizedBox(width: 8),
                 Text(
-                  'ACTIVITIES IN QUEUE',
+                  'ACTIVITIES',
                   style: AppTextStyles.headlineSmall,
                 ),
               ],
@@ -717,10 +730,10 @@ class _HomePageState extends ConsumerState<HomePage> {
           final selectedBranch = branches[selectedIndex];
           return Row(
             children: [
-              const Icon(Icons.offline_bolt, color: AppColors.electricCyan, size: 22),
+              const Icon(Icons.list_alt, color: AppColors.electricCyan, size: 22),
               const SizedBox(width: 8),
               Text(
-                'ACTIVITIES IN QUEUE',
+                'ACTIVITIES',
                 style: AppTextStyles.headlineSmall,
               ),
               const SizedBox(width: 8),
@@ -735,7 +748,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                   builder: (context, snapshot) {
                     final count = snapshot.data?.length ?? 0;
                     return Text(
-                      '$count READY',
+                      '$count ACTIVITIES',
                       style: AppTextStyles.hudMetricSmall.copyWith(color: AppColors.electricCyan),
                     );
                   },
@@ -747,7 +760,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                   // Navigate to activity page for this branch
                 },
                 child: Text(
-                  'HISTORY',
+                  'VIEW ALL',
                   style: AppTextStyles.labelSmallUpper.copyWith(
                     color: AppColors.highVoltageYellow,
                   ),
@@ -801,12 +814,12 @@ class _HomePageState extends ConsumerState<HomePage> {
             const Icon(Icons.add_task, color: AppColors.mutedAlloyText, size: 48),
             const SizedBox(height: 16),
             Text(
-              'NO ACTIVITIES IN ${branch.name.toUpperCase()}',
+              'NO ACTIVITIES IN ${branch.name}',
               style: AppTextStyles.headlineSmall.copyWith(color: AppColors.mutedAlloyText),
             ),
             const SizedBox(height: 8),
             Text(
-              'Add activities in the Config module to start tracking',
+              'Add activities in the Config tab to start tracking',
               style: AppTextStyles.bodyMedium.copyWith(color: AppColors.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
@@ -847,12 +860,12 @@ class _HomePageState extends ConsumerState<HomePage> {
             const Icon(Icons.add_task, color: AppColors.mutedAlloyText, size: 48),
             const SizedBox(height: 16),
             Text(
-              'NO ACTIVITIES IN QUEUE',
+              'NO ACTIVITIES YET',
               style: AppTextStyles.headlineSmall.copyWith(color: AppColors.mutedAlloyText),
             ),
             const SizedBox(height: 8),
             Text(
-              'Add activities in the Config module to start tracking',
+              'Add activities in the Config tab to start tracking',
               style: AppTextStyles.bodyMedium.copyWith(color: AppColors.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
@@ -958,14 +971,14 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '// MOD.03_ACTIVITY_LOG',
+                  'RECORD ACTIVITY',
                   style: AppTextStyles.labelSmallUpper.copyWith(
                     color: AppColors.electricCyan,
                   ),
                 ),
                 const Spacer(),
                 Text(
-                  'SIGNAL: 98.4% LOCKED',
+                  'READY TO LOG',
                   style: AppTextStyles.labelSmallUpper.copyWith(
                     color: AppColors.highVoltageYellow,
                   ),
@@ -1027,6 +1040,10 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
   }
 
   Widget _buildActivityHeader() {
+    final quickEntry = ref.watch(quickEntryProvider);
+    final selectedBranch = quickEntry.selectedBranch;
+    final selectedActivity = quickEntry.selectedActivity;
+    
     return CyberCard(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -1042,7 +1059,7 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
                     border: Border.all(color: AppColors.brushedMetallicTrim),
                   ),
                   child: Text(
-                    'SESSION LOG // PHYSICAL DEVELOPMENT',
+                    selectedBranch != null ? selectedBranch.name.toUpperCase() : 'SELECT BRANCH',
                     style: AppTextStyles.labelSmallUpper.copyWith(
                       color: AppColors.electricCyan,
                     ),
@@ -1052,11 +1069,13 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
                 Row(
                   children: [
                     Text(
-                      'Push-ups Protocol',
+                      selectedActivity?.name ?? 'SELECT ACTIVITY',
                       style: AppTextStyles.headlineMedium,
                     ),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.bolt, color: AppColors.highVoltageYellow, size: 22),
+                    if (selectedActivity != null) ...[
+                      const SizedBox(width: 8),
+                      const Icon(Icons.bolt, color: AppColors.highVoltageYellow, size: 22),
+                    ],
                   ],
                 ),
               ],
@@ -1069,7 +1088,11 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
               color: AppColors.surfaceContainerLowest,
               border: Border.all(color: AppColors.brushedMetallicTrim),
             ),
-            child: const Icon(Icons.fitness_center, color: AppColors.electricCyan, size: 24),
+            child: Icon(
+              selectedActivity?.icon ?? Icons.fitness_center, 
+              color: selectedActivity?.accentColor ?? AppColors.electricCyan, 
+              size: 24
+            ),
           ),
         ],
       ),
@@ -1190,13 +1213,13 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
                   const Icon(Icons.layers, color: AppColors.highVoltageYellow, size: 16),
                   const SizedBox(width: 8),
                   Text(
-                    'Sets Completed',
+                    'Sets',
                     style: AppTextStyles.labelSmallUpper,
                   ),
                 ],
               ),
               Text(
-                'CHAIN STREAK: x${state.sets}',
+                '${state.sets} SETS',
                 style: AppTextStyles.labelSmallUpper.copyWith(
                   color: AppColors.highVoltageYellow,
                 ),
@@ -1230,7 +1253,7 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
                         ),
                       ),
                       Text(
-                        index == 0 ? 'WARMUP' : index == 1 ? 'NORMAL' : index == 2 ? 'CURRENT' : 'OVERLOAD',
+                        'SET ${index + 1}',
                         style: AppTextStyles.labelSmall.copyWith(
                           color: isActive ? AppColors.coreVoid : AppColors.onSurfaceVariant,
                           fontSize: 8,
@@ -1249,9 +1272,9 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
 
   Widget _buildRpeGauge(QuickEntryNotifier notifier, QuickEntryState state) {
     String rpeLabel;
-    if (state.rpe >= 8.5) rpeLabel = 'HIGH VOLTAGE';
-    else if (state.rpe >= 7) rpeLabel = 'STABLE BURN';
-    else rpeLabel = 'CRUISE ENERGY';
+    if (state.rpe >= 8.5) rpeLabel = 'MAXIMUM';
+    else if (state.rpe >= 7) rpeLabel = 'HARD';
+    else rpeLabel = 'MODERATE';
 
     return CyberCard(
       padding: const EdgeInsets.all(16),
@@ -1266,7 +1289,7 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
                   const Icon(Icons.speed, color: AppColors.highVoltageYellow, size: 16),
                   const SizedBox(width: 8),
                   Text(
-                    'Intensity / RPE Gauge',
+                    'Intensity (RPE 1-10)',
                     style: AppTextStyles.labelSmallUpper,
                   ),
                 ],
@@ -1348,10 +1371,10 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
         children: [
           Row(
             children: [
-              const Icon(Icons.code, color: AppColors.outline, size: 16),
+              const Icon(Icons.note, color: AppColors.outline, size: 16),
               const SizedBox(width: 8),
               Text(
-                'Operational Debrief / Memo',
+                'Notes',
                 style: AppTextStyles.labelSmallUpper,
               ),
             ],
@@ -1361,7 +1384,7 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
             onChanged: notifier.setNotes,
             style: AppTextStyles.bodyMedium,
             decoration: InputDecoration(
-              hintText: 'Enter operational debrief / form notes...',
+              hintText: 'Add optional notes...',
               hintStyle: AppTextStyles.bodyMedium.copyWith(
                 color: AppColors.mutedAlloyText.withOpacity(0.6),
               ),
@@ -1408,7 +1431,7 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'CALCULATED POWER GAIN',
+                  'ESTIMATED XP GAIN',
                   style: AppTextStyles.labelSmallUpper.copyWith(
                     color: AppColors.onSurfaceVariant,
                   ),
@@ -1425,7 +1448,7 @@ class _QuickEntryModalState extends ConsumerState<_QuickEntryModal> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '⚡ OVERCLOCK READY',
+                      'READY TO LOG',
                       style: AppTextStyles.labelSmallUpper.copyWith(
                         color: AppColors.electricCyan,
                       ),

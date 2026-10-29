@@ -25,6 +25,9 @@ abstract class AiAgentService {
     required List<Record> branchRecords,
     required List<Activity> branchActivities,
   });
+
+  /// General chat completion
+  Future<String> chat(String message);
 }
 
 /// Feedback proposal from AI analysis
@@ -126,6 +129,36 @@ class InsightProposal {
 
 /// Mock AI Agent Service for testing and development
 class MockAiAgentService implements AiAgentService {
+  @override
+  Future<String> chat(String message) async {
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    final lower = message.toLowerCase();
+    
+    if (lower.contains('hello') || lower.contains('hi ') || lower.contains('hey')) {
+      return 'Hello! I\'m your AI assistant. I can help you with insights about your progress, generate quests, analyze your activities, or answer questions about your data. What would you like to know?';
+    }
+    
+    if (lower.contains('progress') || lower.contains('how am i') || lower.contains('status')) {
+      return 'I\'d need access to your current data to give you a proper progress update. In a full implementation, I\'d analyze your recent records, streaks, and branch progress to give you personalized feedback.';
+    }
+    
+    if (lower.contains('quest') || lower.contains('challenge') || lower.contains('goal')) {
+      return 'I can generate personalized quests based on your active branches and recent activity. Configure your AI provider in the Config tab to enable this feature.';
+    }
+    
+    if (lower.contains('insight') || lower.contains('advice') || lower.contains('recommend')) {
+      return 'I can provide insights on your training balance, streak maintenance, and progression optimization. This requires your AI provider to be configured with a valid API key.';
+    }
+    
+    if (lower.contains('config') || lower.contains('setup') || lower.contains('api')) {
+      return 'To configure AI: Go to Config tab → AI Configuration. Enter your API Key, Base URL (e.g., https://api.openai.com/v1), and Model (e.g., gpt-4o-mini). Choose your provider (OpenAI, Anthropic, or Custom).';
+    }
+    
+    // Default response
+    return 'I understand you said: "$message". As a mock service, I have limited responses. Configure a real AI provider (OpenAI, Anthropic, or custom) in the Config tab to enable full conversational capabilities with access to your actual data.';
+  }
+
   @override
   Future<AiFeedback> analyzeProgress({
     required List<Record> recentRecords,
@@ -322,9 +355,11 @@ class OpenAiAgentService implements AiAgentService {
 
   OpenAiAgentService({
     required String apiKey,
-    this._baseUrl = 'https://api.openai.com/v1',
-    this._model = 'gpt-4o-mini',
-  }) : _apiKey = apiKey;
+    String? baseUrl,
+    String? model,
+  }) : _apiKey = apiKey,
+       _baseUrl = baseUrl ?? 'https://api.openai.com/v1',
+       _model = model ?? 'gpt-4o-mini';
 
   @override
   Future<AiFeedback> analyzeProgress({
@@ -367,5 +402,12 @@ class OpenAiAgentService implements AiAgentService {
       branchRecords: branchRecords,
       branchActivities: branchActivities,
     );
+  }
+
+  @override
+  Future<String> chat(String message) async {
+    // In production, this would call the OpenAI chat completions API
+    // For now, fall back to mock
+    return MockAiAgentService().chat(message);
   }
 }

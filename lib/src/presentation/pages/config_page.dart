@@ -21,6 +21,7 @@ class _ConfigPageState extends ConsumerState<ConfigPage> {
   final _patController = TextEditingController();
   final _repoController = TextEditingController();
   final _aiApiKeyController = TextEditingController();
+  final _aiApiUrlController = TextEditingController(text: 'https://api.openai.com/v1');
   final _aiModelController = TextEditingController();
   final _githubFormKey = GlobalKey<FormState>();
   final _aiFormKey = GlobalKey<FormState>();
@@ -30,6 +31,7 @@ class _ConfigPageState extends ConsumerState<ConfigPage> {
     _patController.dispose();
     _repoController.dispose();
     _aiApiKeyController.dispose();
+    _aiApiUrlController.dispose();
     _aiModelController.dispose();
     super.dispose();
   }
@@ -818,6 +820,26 @@ class _ConfigPageState extends ConsumerState<ConfigPage> {
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
+                      controller: _aiApiUrlController,
+                      style: AppTextStyles.bodyMedium,
+                      decoration: InputDecoration(
+                        labelText: 'API Base URL',
+                        hintText: 'https://api.openai.com/v1',
+                        prefixIcon: const Icon(Icons.link, color: AppColors.electricViolet),
+                        helperText: 'Base URL for OpenAI-compatible API (e.g., https://api.openai.com/v1)',
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'API URL is required';
+                        }
+                        if (!value.startsWith('http')) {
+                          return 'Must be a valid URL';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
                       controller: _aiModelController,
                       style: AppTextStyles.bodyMedium,
                       decoration: InputDecoration(
@@ -885,6 +907,7 @@ class _ConfigPageState extends ConsumerState<ConfigPage> {
                                     if (_aiFormKey.currentState!.validate()) {
                                       await ref.read(aiConfigurationProvider.notifier).configure(
                                         _aiApiKeyController.text.trim(),
+                                        _aiApiUrlController.text.trim(),
                                         _aiModelController.text.trim(),
                                         aiState.provider,
                                       );
