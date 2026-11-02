@@ -1,205 +1,215 @@
 #!/usr/bin/env python3
-"""
-Audit script for GitHub Actions workflow.
-Validates entity creation requests against existing JSON data files.
+"""Audit + apply one data operation (create / update / delete) for the RPG repo.
+
+All inputs arrive through environment variables (never interpolated into a shell
+command):
+
+  RPG_ACTION, RPG_ENTITY_TYPE, RPG_ENTITY_ID, RPG_OPERATION_ID, RPG_PAYLOAD (JSON)
+
+Data lives in branches.json / activities.json / records.json. The outcome of every
+operation is written to status/<operation_id>.json so the app can look up exactly
+the operation it started (PENDING = file not there yet).
+Outcomes: SUCCESS, REJECTED (validation / duplicate), FAILED (unexpected error).
 """
 
-import argparse
 import json
 import os
+import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
+OP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+MAX_STATUS_FILES = 100
+ACTIONS = ("create", "update", "delete")
+FILES = {"branch": "branches.json", "activity": "activities.json", "record": "records.json"}
+
+
+def _norm(s: Any) -> str:
+    return str(s or "").strip().lower()
 
 
 class EntityAuditor:
     def __init__(self, repo_root: str = "."):
-        self.repo_root = Path(repo_root)
-        self.branches_file = self.repo_root / "branches.json"
-        self.activities_file = self.repo_root / "activities.json"
-        self.records_file = self.repo_root / "records.json"
-        
-        # Load existing data
-        self.branches = self._load_json(self.branches_file)
-        self.activities = self._load_json(self.activities_file)
-        self.records = self._load_json(self.records_file)
+        self.root = Path(repo_root)
+        self.branches = self._load("branch")
+        self.activities = self._load("activity")
+        self.records = self._load("record")
 
-    def _load_json(self, file_path: Path) -> List[Dict[str, Any]]:
-        """Load JSON file, return empty list if not exists or invalid."""
-        if not file_path.exists():
+    # ---- persistence -------------------------------------------------
+    def _path(self, etype: str) -> Path:
+        return self.root / FILES[etype]
+
+    def _load(self, etype: str) -> List[Dict[str, Any]]:
+        p = self._path(etype)
+        if not p.exists():
             return []
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    return data
-                elif isinstance(data, dict) and 'data' in data:
-                    return data['data']
-                return []
-        except (json.JSONDecodeError, IOError):
-            return []
+            data = json.loads(p.read_text(encoding="utf-8") or "[]")
+        except json.JSONDecodeError:
+            raise RuntimeError(f"{p.name} is corrupt JSON; refusing to overwrite")
+        return data if isinstance(data, list) else []
 
-    def _save_json(self, file_path: Path, data: List[Dict[str, Any]]) -> None:
-        """Save JSON file with pretty formatting."""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+    def _save(self, etype: str) -> None:
+        data = {"branch": self.branches, "activity": self.activities, "record": self.records}[etype]
+        self._path(etype).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    def _entity_exists(self, entity_type: str, entity_id: str) -> bool:
-        """Check if entity already exists."""
-        if entity_type == 'branch':
-            return any(b.get('id') == entity_id for b in self.branches)
-        elif entity_type == 'activity':
-            return any(a.get('id') == entity_id for a in self.activities)
-        elif entity_type == 'record':
-            return any(r.get('id') == entity_id for r in self.records)
-        return False
+    def _coll(self, etype: str) -> List[Dict[str, Any]]:
+        return {"branch": self.branches, "activity": self.activities, "record": self.records}[etype]
 
-    def _validate_branch_payload(self, payload: Dict[str, Any]) -> Optional[str]:
-        """Validate branch payload structure."""
-        required_fields = ['id', 'name', 'description', 'accent_color', 'icon_code_point']
-        for field in required_fields:
-            if field not in payload:
-                return f"Missing required field: {field}"
+    # ---- validation --------------------------------------------------
+    def _require(self, payload: Dict[str, Any], fields: List[str]) -> Optional[str]:
+        for f in fields:
+            if f not in payload or payload[f] in (None, ""):
+                if f == "description" and f in payload:
+                    continue
+                return f"Missing required field: {f}"
         return None
 
-    def _validate_activity_payload(self, payload: Dict[str, Any]) -> Optional[str]:
-        """Validate activity payload structure."""
-        required_fields = ['id', 'branch_id', 'name', 'description', 'category', 'accent_color', 'icon_code_point']
-        for field in required_fields:
-            if field not in payload:
-                return f"Missing required field: {field}"
-        
-        # Validate branch_id exists
-        branch_id = payload.get('branch_id')
-        if branch_id and not any(b.get('id') == branch_id for b in self.branches):
-            return f"Referenced branch_id '{branch_id}' does not exist"
-        
+    def _validate(self, action: str, etype: str, eid: str, payload: Dict[str, Any]) -> Optional[str]:
+        if payload.get("id") != eid:
+            return "Payload id does not match entity id"
+        if etype == "branch":
+            err = self._require(payload, ["id", "name", "accent_color", "icon_code_point"])
+            if err:
+                return err
+            for b in self.branches:
+                if b["id"] != eid and _norm(b.get("name")) == _norm(payload["name"]):
+                    return f'A branch named "{payload["name"]}" already exists'
+        elif etype == "activity":
+            err = self._require(payload, ["id", "branch_id", "name", "accent_color", "icon_code_point"])
+            if err:
+                return err
+            if not any(b["id"] == payload["branch_id"] for b in self.branches):
+                return f"Branch '{payload['branch_id']}' does not exist"
+            for a in self.activities:
+                if (a["id"] != eid and a.get("branch_id") == payload["branch_id"]
+                        and _norm(a.get("name")) == _norm(payload["name"])):
+                    return f'Activity "{payload["name"]}" already exists in this branch'
+            fields = payload.get("fields", [])
+            if not isinstance(fields, list):
+                return "fields must be a list"
+            seen = set()
+            for f in fields:
+                if not isinstance(f, dict) or not f.get("id") or not f.get("name") or not f.get("type"):
+                    return "Every field needs id, name and type"
+                if f["id"] in seen:
+                    return f"Duplicate field id '{f['id']}'"
+                seen.add(f["id"])
+        elif etype == "record":
+            err = self._require(payload, ["id", "activity_id", "branch_id", "timestamp"])
+            if err:
+                return err
+            act = next((a for a in self.activities if a["id"] == payload["activity_id"]), None)
+            if act is None:
+                return f"Activity '{payload['activity_id']}' does not exist"
+            if act.get("branch_id") != payload["branch_id"]:
+                return "Record branch does not match the activity's branch"
+            values = payload.get("field_values", {})
+            if not isinstance(values, dict):
+                return "field_values must be an object"
+            for f in act.get("fields", []):
+                if f.get("required", True) and values.get(f["id"]) in (None, ""):
+                    return f"Missing value for required field '{f['name']}'"
         return None
 
-    def _validate_record_payload(self, payload: Dict[str, Any]) -> Optional[str]:
-        """Validate record payload structure."""
-        required_fields = ['id', 'activity_id', 'branch_id', 'timestamp', 'field_values', 'xp_earned']
-        for field in required_fields:
-            if field not in payload:
-                return f"Missing required field: {field}"
-        
-        # Validate activity_id exists
-        activity_id = payload.get('activity_id')
-        if activity_id and not any(a.get('id') == activity_id for a in self.activities):
-            return f"Referenced activity_id '{activity_id}' does not exist"
-        
-        # Validate branch_id exists
-        branch_id = payload.get('branch_id')
-        if branch_id and not any(b.get('id') == branch_id for b in self.branches):
-            return f"Referenced branch_id '{branch_id}' does not exist"
-        
-        return None
+    # ---- operations --------------------------------------------------
+    def audit(self, action: str, etype: str, eid: str, payload: Dict[str, Any]) -> Dict[str, str]:
+        if action not in ACTIONS:
+            return self._rej(f"Unknown action: {action}")
+        if etype not in FILES:
+            return self._rej(f"Unknown entity type: {etype}")
+        coll = self._coll(etype)
+        idx = next((i for i, e in enumerate(coll) if e.get("id") == eid), -1)
 
-    def audit(self, entity_type: str, entity_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Audit the entity creation request.
-        Returns dict with 'status' (SUCCESS/REJECTED) and 'message'.
-        """
-        # Check if entity already exists
-        if self._entity_exists(entity_type, entity_id):
-            return {
-                'status': 'REJECTED',
-                'message': f'{entity_type.capitalize()} with id "{entity_id}" already exists',
-                'should_commit': False
-            }
+        if action == "create":
+            if idx >= 0:
+                return self._rej(f'{etype.capitalize()} "{eid}" already exists')
+        elif idx < 0:
+            return self._rej(f'{etype.capitalize()} "{eid}" does not exist')
 
-        # Validate payload based on entity type
-        validation_error = None
-        if entity_type == 'branch':
-            validation_error = self._validate_branch_payload(payload)
-        elif entity_type == 'activity':
-            validation_error = self._validate_activity_payload(payload)
-        elif entity_type == 'record':
-            validation_error = self._validate_record_payload(payload)
+        if action == "delete":
+            if etype == "branch":
+                gone = {a["id"] for a in self.activities if a.get("branch_id") == eid}
+                self.activities = [a for a in self.activities if a.get("branch_id") != eid]
+                self.records = [r for r in self.records if r.get("branch_id") != eid and r.get("activity_id") not in gone]
+                self.branches = [b for b in self.branches if b["id"] != eid]
+                for t in FILES:
+                    self._save(t)
+            elif etype == "activity":
+                self.activities = [a for a in self.activities if a["id"] != eid]
+                self.records = [r for r in self.records if r.get("activity_id") != eid]
+                self._save("activity")
+                self._save("record")
+            else:
+                self.records = [r for r in self.records if r["id"] != eid]
+                self._save("record")
+            return {"status": "SUCCESS", "message": f"{etype.capitalize()} deleted"}
+
+        err = self._validate(action, etype, eid, payload)
+        if err:
+            return self._rej(f"Validation failed: {err}")
+        if action == "create":
+            coll.append(payload)
         else:
-            return {
-                'status': 'REJECTED',
-                'message': f'Unknown entity type: {entity_type}',
-                'should_commit': False
-            }
+            coll[idx] = payload
+        self._save(etype)
+        verb = "created" if action == "create" else "updated"
+        return {"status": "SUCCESS", "message": f"{etype.capitalize()} {verb}"}
 
-        if validation_error:
-            return {
-                'status': 'REJECTED',
-                'message': f'Validation failed: {validation_error}',
-                'should_commit': False
-            }
-
-        # All checks passed - add entity to appropriate collection
-        if entity_type == 'branch':
-            self.branches.append(payload)
-            self._save_json(self.branches_file, self.branches)
-        elif entity_type == 'activity':
-            self.activities.append(payload)
-            self._save_json(self.activities_file, self.activities)
-        elif entity_type == 'record':
-            self.records.append(payload)
-            self._save_json(self.records_file, self.records)
-
-        return {
-            'status': 'SUCCESS',
-            'message': f'{entity_type.capitalize()} "{entity_id}" created successfully',
-            'should_commit': True
-        }
+    @staticmethod
+    def _rej(msg: str) -> Dict[str, str]:
+        return {"status": "REJECTED", "message": msg}
 
 
-def parse_payload(payload_str: str) -> Dict[str, Any]:
-    """Parse payload string, handling both JSON and escaped JSON."""
-    # Try direct JSON parse first
+def write_status(root: Path, op_id: str, result: Dict[str, str], etype: str, eid: str, action: str) -> Path:
+    if not OP_ID_RE.match(op_id or ""):
+        raise ValueError("Invalid operation id")
+    d = Path(root) / "status"
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / f"{op_id}.json"
+    out.write_text(json.dumps({
+        "operation_id": op_id,
+        "status": result["status"],
+        "message": result["message"],
+        "action": action,
+        "entity_type": etype,
+        "entity_id": eid,
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }, indent=2) + "\n", encoding="utf-8")
+    files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    for old in files[:-MAX_STATUS_FILES]:
+        old.unlink()
+    return out
+
+
+def main() -> int:
+    env = os.environ
+    op_id = env.get("RPG_OPERATION_ID", "")
+    action = env.get("RPG_ACTION", "create")
+    etype = env.get("RPG_ENTITY_TYPE", "")
+    eid = env.get("RPG_ENTITY_ID", "")
+    root = Path(env.get("RPG_ROOT", "."))
     try:
-        return json.loads(payload_str)
-    except json.JSONDecodeError:
-        pass
-    
-    # Try unescaping and parsing
+        payload = json.loads(env.get("RPG_PAYLOAD") or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be an object")
+        result = EntityAuditor(str(root)).audit(action, etype, eid, payload)
+    except Exception as exc:  # noqa: BLE001 - report every failure through the status file
+        result = {"status": "FAILED", "message": f"Audit error: {exc}"}
     try:
-        # Handle escaped quotes
-        unescaped = payload_str.replace('\\"', '"').replace("\\'", "'")
-        return json.loads(unescaped)
-    except json.JSONDecodeError:
-        pass
-    
-    # Return empty dict if all parsing fails
-    return {}
+        write_status(root, op_id, result, etype, eid, action)
+    except ValueError as exc:
+        print(f"::error::{exc}")
+        return 1
+    print(f"{result['status']}: {result['message']}")
+    out = env.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a", encoding="utf-8") as fh:
+            fh.write(f"status={result['status']}\n")
+    return 0
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Audit entity creation for RPG data')
-    parser.add_argument('--event-type', required=True, help='Event type (repository_dispatch, workflow_dispatch)')
-    parser.add_argument('--entity-type', required=True, choices=['branch', 'activity', 'record'], help='Entity type')
-    parser.add_argument('--entity-id', required=True, help='Entity ID')
-    parser.add_argument('--payload', required=True, help='JSON payload string')
-    
-    args = parser.parse_args()
-    
-    # Parse payload
-    payload = parse_payload(args.payload)
-    
-    if not payload:
-        print("::error::Failed to parse payload as JSON")
-        print("status=REJECTED")
-        print("message=Failed to parse payload as JSON")
-        sys.exit(1)
-    
-    # Run audit
-    auditor = EntityAuditor()
-    result = auditor.audit(args.entity_type, args.entity_id, payload)
-    
-    # Output results for GitHub Actions
-    print(f"status={result['status']}")
-    print(f"message={result['message']}")
-    print(f"should_commit={str(result['should_commit']).lower()}")
-    
-    # Exit with error code if rejected
-    if result['status'] == 'REJECTED':
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    sys.exit(main())
