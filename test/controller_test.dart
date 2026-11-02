@@ -119,6 +119,20 @@ void main() {
     expect(c.state.view.branches, hasLength(1));
   });
 
+  test('data never disappears from the view while the first upload runs', () async {
+    final (c, _) = await setup(connected: false);
+    await c.saveBranch(branch(), isNew: true);
+    await c.saveActivity(
+        Activity(id: 'a1', branchId: 'b1', name: 'Run', color: 1, iconCodePoint: 1, fields: const [], createdAt: DateTime(2026)),
+        isNew: true);
+    final seen = <String>[];
+    c.addListener((st) => seen.add('${st.view.branches.length}/${st.view.activities.length}'));
+    await c.connect(const GithubConfig(repo: 'o/r', pat: 't'));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(seen, isNotEmpty);
+    expect(seen.where((x) => x != '1/1'), isEmpty, reason: 'saw $seen');
+  });
+
   test('operations are sent in order', () async {
     final (c, remote) = await setup();
     final a = Activity(

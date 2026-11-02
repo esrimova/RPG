@@ -168,8 +168,16 @@ class AppController extends StateNotifier<AppState> {
           break;
         }
         final ops = state.ops.skip(1).toList();
+        // An accepted operation now lives in the repository: fold it into the base right away,
+        // otherwise it would vanish from the view until the final pull.
+        var base = state.base;
+        if (res.ok) {
+          final applied = applyOperation(base, op);
+          if (applied.ok) base = applied.snapshot;
+        }
+        await _local.saveBase(base);
         await _local.saveOps(ops);
-        state = state.copyWith(ops: ops);
+        state = state.copyWith(base: base, ops: ops);
         if (!res.ok) {
           state = state.copyWith(notice: 'Change was not saved: ${res.message}');
         }

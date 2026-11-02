@@ -8,11 +8,12 @@
 5. UI contradicted the spec (bottom tabs instead of swipe + Home), duplicated dialogs, jargon labels; `google_fonts` needed network at runtime.
 
 ## Replaced by
-Rewritten domain/data/state/UI (`lib/src`), new workflow + audit script with tests, INTERNET permission, 31 automated tests (18 Dart, 13 Python), `flutter analyze` clean (was 101 issues).
+Rewritten domain/data/state/UI (`lib/src`), new workflow + audit script with tests, INTERNET permission, 32 automated tests (19 Dart, 13 Python), `flutter analyze` clean (was 101 issues).
 
-## Not verified (needs you)
-- Real GitHub round trip (needs the new `.github` pushed + a token). The pipeline is tested with a faithful fake and the Python script was run end to end locally.
-- Install/run on the phone (left untouched because another process has priority there).
+## Verified live (2026-11-02)
+- Real GitHub round trip on the phone: connect, first upload (branch, activity, record), then a new record. Workflow runs succeeded, `status/*.json` = SUCCESS, repo JSON matches the phone.
+- Found and fixed during it: accepted operations vanished from the view until the final pull (now folded into the base immediately; regression test added).
+- Note: the repository is public. Anything the app uploads is visible to everyone; the app warns about this when you test the connection.
 
 ## Decision
 The in-app AI coach and AI settings were removed: an assistant reads the repo instead (`DATA_FORMAT.md`).
