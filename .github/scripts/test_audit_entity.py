@@ -78,6 +78,112 @@ class AuditTest(unittest.TestCase):
         r = self.run_op("create", "record", "r1", record())
         self.assertEqual(r["status"], "SUCCESS")
 
+    # ---- goals -------------------------------------------------------
+    GOAL_FIELDS = [{"id": "km", "name": "Km", "type": "number", "required": True}]
+
+    def goal_activity(self, **extra):
+        a = activity(fields=list(self.GOAL_FIELDS))
+        a.update({"base_xp": 10, "goal": 5, "goal_field_id": "km"})
+        a.update(extra)
+        return a
+
+    def goal_record(self, value, xp, **extra):
+        r = record(values={"km": value})
+        r["xp_earned"] = xp
+        r.update(extra)
+        return r
+
+    def setup_goal(self):
+        self.run_op("create", "branch", "b1", branch())
+        self.assertEqual(self.run_op("create", "activity", "a1", self.goal_activity())["status"], "SUCCESS")
+
+    def test_goal_xp_rounding(self):
+        self.assertEqual(ae.goal_xp(10, 3, 4), 8)    # 7.5 -> 8
+        self.assertEqual(ae.goal_xp(10, 0, 4), 0)
+        self.assertEqual(ae.goal_xp(10, -2, 4), 0)
+        self.assertEqual(ae.goal_xp(10, 10, 5), 20)
+
+    def test_goal_without_goal_field_rejected(self):
+        self.run_op("create", "branch", "b1", branch())
+        a = self.goal_activity()
+        del a["goal_field_id"]
+        self.assertEqual(self.run_op("create", "activity", "a1", a)["status"], "REJECTED")
+
+    def test_goal_field_without_goal_rejected(self):
+        self.run_op("create", "branch", "b1", branch())
+        a = self.goal_activity()
+        del a["goal"]
+        self.assertEqual(self.run_op("create", "activity", "a1", a)["status"], "REJECTED")
+
+    def test_goal_field_unknown_rejected(self):
+        self.run_op("create", "branch", "b1", branch())
+        r = self.run_op("create", "activity", "a1", self.goal_activity(goal_field_id="nope"))
+        self.assertEqual(r["status"], "REJECTED")
+
+    def test_non_numeric_goal_field_rejected(self):
+        self.run_op("create", "branch", "b1", branch())
+        for t in ("text", "yesno", "scale"):
+            a = self.goal_activity(fields=[{"id": "km", "name": "Km", "type": t, "required": True}])
+            self.assertEqual(self.run_op("create", "activity", "a1", a)["status"], "REJECTED", t)
+
+    def test_duration_goal_field_accepted(self):
+        self.run_op("create", "branch", "b1", branch())
+        a = self.goal_activity(fields=[{"id": "km", "name": "Km", "type": "duration", "required": True}])
+        self.assertEqual(self.run_op("create", "activity", "a1", a)["status"], "SUCCESS")
+
+    def test_goal_not_positive_rejected(self):
+        self.run_op("create", "branch", "b1", branch())
+        for g in (0, -1, "5", True):
+            r = self.run_op("create", "activity", "a1", self.goal_activity(goal=g))
+            self.assertEqual(r["status"], "REJECTED", g)
+
+    def test_record_wrong_xp_rejected_correct_accepted(self):
+        self.setup_goal()
+        self.assertEqual(self.run_op("create", "record", "r1", self.goal_record(3, 45))["status"], "REJECTED")
+        self.assertEqual(self.run_op("create", "record", "r1", self.goal_record(3, 6))["status"], "SUCCESS")
+
+    def test_record_zero_value_requires_zero_xp(self):
+        self.setup_goal()
+        self.assertEqual(self.run_op("create", "record", "r1", self.goal_record(0, 5))["status"], "REJECTED")
+        self.assertEqual(self.run_op("create", "record", "r1", self.goal_record(0, 0))["status"], "SUCCESS")
+
+    def test_record_missing_or_non_numeric_goal_value_rejected(self):
+        self.setup_goal()
+        self.assertEqual(self.run_op("create", "record", "r1", self.goal_record("3", 6))["status"], "REJECTED")
+        self.assertEqual(self.run_op("create", "record", "r2", self.goal_record(True, 2))["status"], "REJECTED")
+        r = record(values={})
+        self.assertEqual(self.run_op("create", "record", "r1", r)["status"], "REJECTED")
+        a = self.goal_activity()
+        a["fields"][0]["required"] = False
+        self.run_op("update", "activity", "a1", a)
+        self.assertEqual(self.run_op("create", "record", "r3", r)["status"], "REJECTED")
+
+    def test_record_goal_override_used(self):
+        self.setup_goal()
+        self.assertEqual(self.run_op("create", "record", "r1", self.goal_record(3, 6, goal=10))["status"], "REJECTED")
+        self.assertEqual(self.run_op("create", "record", "r1", self.goal_record(3, 3, goal=10))["status"], "SUCCESS")
+
+    def test_record_goal_not_positive_rejected(self):
+        self.setup_goal()
+        for g in (0, -3):
+            r = self.run_op("create", "record", "r1", self.goal_record(3, 0, goal=g))
+            self.assertEqual(r["status"], "REJECTED", g)
+
+    def test_record_goal_ignored_without_activity_goal(self):
+        self.run_op("create", "branch", "b1", branch())
+        self.run_op("create", "activity", "a1", activity())
+        r = record()
+        r["goal"] = 0
+        self.assertEqual(self.run_op("create", "record", "r1", r)["status"], "SUCCESS")
+
+    def test_activity_goal_update_leaves_records_untouched(self):
+        self.setup_goal()
+        self.run_op("create", "record", "r1", self.goal_record(3, 6))
+        r = self.run_op("update", "activity", "a1", self.goal_activity(goal=10))
+        self.assertEqual(r["status"], "SUCCESS")
+        stored = ae.EntityAuditor(str(self.root)).records
+        self.assertEqual(stored[0]["xp_earned"], 6)
+
     def test_update_requires_existing(self):
         r = self.run_op("update", "branch", "zzz", branch("zzz"))
         self.assertEqual(r["status"], "REJECTED")

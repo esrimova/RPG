@@ -13,6 +13,7 @@ Outcomes: SUCCESS, REJECTED (validation / duplicate), FAILED (unexpected error).
 """
 
 import json
+import math
 import os
 import re
 import sys
@@ -24,6 +25,23 @@ OP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 MAX_STATUS_FILES = 100
 ACTIONS = ("create", "update", "delete")
 FILES = {"branch": "branches.json", "activity": "activities.json", "record": "records.json"}
+
+
+NUMERIC_TYPES = ("number", "duration")
+
+
+def _is_num(v: Any) -> bool:
+    """A JSON number. bool is an int in Python but never a number here."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def goal_xp(base_xp: int, value: float, goal: float) -> int:
+    """Points for a record against a goal: floor(base*value/goal + 0.5); 0 when value <= 0.
+
+    Must match goalXp in lib/src/domain/goals.dart."""
+    if value <= 0:
+        return 0
+    return math.floor(base_xp * value / goal + 0.5)
 
 
 def _norm(s: Any) -> str:
@@ -97,6 +115,9 @@ class EntityAuditor:
                 if f["id"] in seen:
                     return f"Duplicate field id '{f['id']}'"
                 seen.add(f["id"])
+            err = self._goal_error(payload, fields)
+            if err:
+                return err
         elif etype == "record":
             err = self._require(payload, ["id", "activity_id", "branch_id", "timestamp"])
             if err:
@@ -112,6 +133,32 @@ class EntityAuditor:
             for f in act.get("fields", []):
                 if f.get("required", True) and values.get(f["id"]) in (None, ""):
                     return f"Missing value for required field '{f['name']}'"
+            if action == "create" and act.get("goal") is not None:
+                gv = values.get(act.get("goal_field_id"))
+                if not _is_num(gv):
+                    return "Missing goal value"
+                effective = payload["goal"] if payload.get("goal") is not None else act["goal"]
+                if not _is_num(effective) or effective <= 0:
+                    return "Goal must be greater than 0"
+                base = act.get("base_xp", 10)
+                if payload.get("xp_earned") != goal_xp(base, gv, effective):
+                    return "Points do not match the goal"
+        return None
+
+    @staticmethod
+    def _goal_error(a: Dict[str, Any], fields: List[Dict[str, Any]]) -> Optional[str]:
+        goal, gfid = a.get("goal"), a.get("goal_field_id")
+        if goal is None and gfid is None:
+            return None
+        if goal is None:
+            return "Goal field needs a goal"
+        if not _is_num(goal) or goal <= 0:
+            return "Goal must be greater than 0"
+        f = next((f for f in fields if f["id"] == gfid), None)
+        if f is None:
+            return "Goal needs a field to measure"
+        if f["type"] not in NUMERIC_TYPES:
+            return "Goal field must be a number or duration field"
         return None
 
     # ---- operations --------------------------------------------------
