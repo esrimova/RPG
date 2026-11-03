@@ -8,6 +8,7 @@ import '../state/providers.dart';
 import 'common.dart';
 import 'editors.dart';
 import 'icons.dart';
+import 'push_dialog.dart';
 import 'theme.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -169,7 +170,11 @@ class _GithubSectionState extends ConsumerState<_GithubSection> {
             if (connected) ...[
               const SizedBox(height: 4),
               Text(
-                app.lastSync == null ? 'Never synced' : 'Last sync ${DateFormat.MMMd().add_Hm().format(app.lastSync!)} · ${app.ops.length} change(s) waiting',
+                app.lastSync == null ? 'Never synced' : 'Last sync ${DateFormat.MMMd().add_Hm().format(app.lastSync!)} · ${app.pendingCount} change(s) waiting',
+                style: const TextStyle(color: Pal.muted, fontSize: 12),
+              ),
+              Text(
+                app.pushLog.isEmpty ? 'Never pushed' : 'Last push ${formatPushTime(app.pushLog.first.time)}',
                 style: const TextStyle(color: Pal.muted, fontSize: 12),
               ),
             ],
@@ -201,7 +206,16 @@ class _GithubSectionState extends ConsumerState<_GithubSection> {
             Wrap(spacing: 8, runSpacing: 4, children: [
               OutlinedButton(onPressed: _busy ? null : _test, child: const Text('Test connection')),
               FilledButton(onPressed: _busy ? null : _connect, child: Text(connected ? 'Update & sync' : 'Connect')),
-              if (connected) OutlinedButton(onPressed: app.syncing ? null : () => ref.read(appProvider.notifier).syncNow(), child: Text(app.syncing ? 'Syncing…' : 'Sync now')),
+              if (connected)
+                FilledButton.icon(
+                  onPressed: app.syncing || !app.hasPending ? null : () => showPushDialog(context, ref),
+                  icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                  label: Text('Push to GitHub (${app.pendingCount})'),
+                ),
+              if (connected)
+                OutlinedButton(
+                    onPressed: app.syncing ? null : () => ref.read(appProvider.notifier).refresh(),
+                    child: const Text('Refresh from GitHub')),
               if (connected)
                 TextButton(
                   onPressed: () async {
@@ -216,6 +230,22 @@ class _GithubSectionState extends ConsumerState<_GithubSection> {
           ]),
         ),
       ),
+      if (connected && app.pushLog.isNotEmpty) ...[
+        const SizedBox(height: 16),
+        _title('Push log', 'Last ${app.pushLog.length > 10 ? 10 : app.pushLog.length} pushes'),
+        Card(
+          child: Column(children: [
+            for (final e in app.pushLog.take(10))
+              ListTile(
+                dense: true,
+                leading: Icon(e.rejected + e.failed > 0 ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+                    color: e.rejected + e.failed > 0 ? Pal.yellow : Pal.green, size: 20),
+                title: Text(formatPushTime(e.time)),
+                subtitle: Text('${e.sent} sent · ${e.succeeded} saved · ${e.rejected} rejected · ${e.failed} failed'),
+              ),
+          ]),
+        ),
+      ],
     ]);
   }
 }

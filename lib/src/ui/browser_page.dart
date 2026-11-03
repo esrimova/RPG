@@ -9,6 +9,7 @@ import 'common.dart';
 import 'editors.dart';
 import 'home_page.dart';
 import 'icons.dart';
+import 'push_dialog.dart';
 import 'settings_page.dart';
 import 'theme.dart';
 
@@ -35,8 +36,7 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     if (!app.github.isConfigured) {
       Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsPage()));
     } else if (!app.syncing) {
-      ref.read(appProvider.notifier).syncNow();
-      toast(context, 'Syncing with GitHub…');
+      showPushDialog(context, ref);
     }
   }
 

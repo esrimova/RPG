@@ -166,14 +166,9 @@ class AppController extends StateNotifier<AppState> {
 
   // ---- pushing ------------------------------------------------------
 
-  /// Kept for the UI until it calls [pushNow] directly. Pushes; with nothing
-  /// to push it only refreshes from GitHub.
-  Future<void> syncNow() async {
+  /// Reads the repository (never sends anything). No-op while a push runs.
+  Future<void> refresh() async {
     if (!state.github.isConfigured || _pushing) return;
-    if (state.ops.isNotEmpty) {
-      await pushNow();
-      return;
-    }
     final pulling = _pulling;
     if (pulling != null) return pulling;
     _pulling = _launchPull();

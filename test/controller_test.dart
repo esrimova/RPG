@@ -547,11 +547,13 @@ void main() {
     }
   });
 
-  test('syncNow pushes (thin wrapper until the UI moves to pushNow)', () async {
+  test('refresh only pulls: pending changes are never sent', () async {
     final (c, remote) = await setup();
+    remote.data = Snapshot.empty.copyWith(branches: [branch('r1')]);
     await c.saveBranch(branch(), isNew: true);
-    await c.syncNow();
-    expect(remote.batches, hasLength(1));
-    expect(c.state.ops, isEmpty);
+    await c.refresh();
+    expect(remote.batches, isEmpty);
+    expect(c.state.ops, hasLength(1));
+    expect(c.state.base.branches.map((b) => b.id), ['r1']);
   });
 }

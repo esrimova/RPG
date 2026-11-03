@@ -4,6 +4,7 @@ import '../domain/progress.dart';
 import '../state/providers.dart';
 import 'common.dart';
 import 'icons.dart';
+import 'push_dialog.dart';
 import 'settings_page.dart';
 import 'theme.dart';
 
@@ -72,6 +73,14 @@ class HomePage extends ConsumerWidget {
               trailing: Text('Lv ${l.level}', style: TextStyle(color: color, fontWeight: FontWeight.w700)),
             );
           }),
+        if (app.github.isConfigured) ...[
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: app.syncing || !app.hasPending ? null : () => showPushDialog(context, ref),
+            icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+            label: Text('Push to GitHub (${app.pendingCount})'),
+          ),
+        ],
         const SizedBox(height: 20),
         _navTile(context, Icons.settings, 'Configuration', 'Branches, activities, fields and GitHub storage', const SettingsPage()),
       ]),
