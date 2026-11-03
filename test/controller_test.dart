@@ -29,6 +29,13 @@ class FakeRemote implements RemoteStore {
   }
 
   @override
+  Future<void> dispatchBatch(List<Operation> ops) async {
+    for (final op in ops) {
+      await dispatch(op);
+    }
+  }
+
+  @override
   Future<OpResult> status(String id) async {
     final n = polls[id] = (polls[id] ?? 0) + 1;
     if (n < pollsUntilDone) return const OpResult(OpOutcome.pending, '');
@@ -58,6 +65,33 @@ Future<(AppController, FakeRemote)> setup({bool connected = true}) async {
 }
 
 void main() {
+  Operation chunkOp(int i, {String pad = ''}) => Operation(
+      id: 'op$i',
+      action: OpAction.create,
+      type: EntityType.branch,
+      entityId: 'b$i',
+      payload: {'name': pad},
+      createdAt: DateTime(2026),
+      localDate: '2026-11-03');
+
+  test('RemoteStore.chunk splits by count, in order', () {
+    final ops = [for (var i = 0; i < 60; i++) chunkOp(i)];
+    final batches = RemoteStore.chunk(ops);
+    expect(batches.map((b) => b.length), [25, 25, 10]);
+    expect(batches.expand((b) => b).map((o) => o.id), ops.map((o) => o.id));
+  });
+
+  test('RemoteStore.chunk puts an oversized operation alone', () {
+    final big = chunkOp(1, pad: 'x' * 49000);
+    final ops = [chunkOp(0), big, chunkOp(2)];
+    final batches = RemoteStore.chunk(ops);
+    expect(batches.map((b) => b.map((o) => o.id).toList()), [
+      ['op0'],
+      ['op1'],
+      ['op2'],
+    ]);
+  });
+
   test('local-only mode stores data without GitHub', () async {
     final (c, _) = await setup(connected: false);
     final r = await c.saveBranch(branch(), isNew: true);

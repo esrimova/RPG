@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import '../domain/models.dart';
 
@@ -21,11 +23,45 @@ abstract class RemoteStore {
   /// Fires the workflow for [op]. Throws [RemoteException] when it can't be sent.
   Future<void> dispatch(Operation op);
 
+  /// Fires the workflow once for all [ops] (at most 25 / ~48 KB; see [chunk]).
+  /// Throws [RemoteException] when it can't be sent.
+  Future<void> dispatchBatch(List<Operation> ops);
+
+  /// Splits [ops] into ordered batches of at most [maxOps] operations and
+  /// [maxBytes] serialized bytes. An operation over [maxBytes] goes alone.
+  static List<List<Operation>> chunk(List<Operation> ops, {int maxOps = 25, int maxBytes = 48000}) {
+    final batches = <List<Operation>>[];
+    var current = <Operation>[];
+    var bytes = 0;
+    for (final op in ops) {
+      final size = utf8.encode(jsonEncode(dispatchJson(op))).length;
+      if (current.isNotEmpty && (current.length >= maxOps || bytes + size > maxBytes)) {
+        batches.add(current);
+        current = <Operation>[];
+        bytes = 0;
+      }
+      current.add(op);
+      bytes += size;
+    }
+    if (current.isNotEmpty) batches.add(current);
+    return batches;
+  }
+
+  /// The wire form of one operation inside a dispatch payload.
+  static Map<String, dynamic> dispatchJson(Operation op) => {
+        'operation_id': op.id,
+        'action': op.action.name,
+        'entity_type': op.type.name,
+        'entity_id': op.entityId,
+        'payload': op.payload,
+        'local_date': op.localDate,
+      };
+
   /// Looks up the outcome of one operation. `pending` while the status file
   /// does not exist yet.
   Future<OpResult> status(String operationId);
 
-  /// Reads branches.json / activities.json / records.json.
+  /// Reads branches.json / activities.json / records.json / quests.json.
   Future<Snapshot> pull();
 
   /// Verifies token, repository access and workflow installation.
@@ -100,6 +136,24 @@ class GithubRemoteStore implements RemoteStore {
   }
 
   @override
+  Future<void> dispatchBatch(List<Operation> ops) async {
+    try {
+      final r = await _dio.post('/repos/$repo/dispatches', data: {
+        'event_type': 'rpg_operation',
+        'client_payload': {
+          'operations': ops.map(RemoteStore.dispatchJson).toList(),
+        },
+      });
+      if (r.statusCode != 204) {
+        final retry = (r.statusCode ?? 500) >= 500;
+        throw RemoteException(_explain(r, 'starting the sync'), retryable: retry);
+      }
+    } on DioException catch (e) {
+      _net(e, 'starting the sync');
+    }
+  }
+
+  @override
   Future<OpResult> status(String operationId) async {
     try {
       final r = await _dio.get('/repos/$repo/contents/status/$operationId.json',
@@ -137,7 +191,8 @@ class GithubRemoteStore implements RemoteStore {
       final b = await _readJson('branches.json');
       final a = await _readJson('activities.json');
       final rec = await _readJson('records.json');
-      return Snapshot.fromLists(b, a, rec);
+      final q = await _readJson('quests.json');
+      return Snapshot.fromLists(b, a, rec, q);
     } on DioException catch (e) {
       _net(e, 'downloading your data');
     }
