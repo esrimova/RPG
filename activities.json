@@ -1,7 +1,7 @@
 [
   {
     "accent_color": 4278248949,
-    "base_xp": 10,
+    "base_xp": 15,
     "branch_id": "br_hnskeukkhu0",
     "created_at": "2026-11-02T15:08:28.345365",
     "description": "",
@@ -16,5 +16,24 @@
     "icon_code_point": 57997,
     "id": "ac_hnsnhfu2oh2",
     "name": "Push-ups"
+  },
+  {
+    "accent_color": 4294210230,
+    "base_xp": 10,
+    "branch_id": "br_hnskeukkhu0",
+    "created_at": "2026-11-02T22:11:36.418794",
+    "description": "",
+    "fields": [
+      {
+        "id": "fhnsz3nc215",
+        "name": "Hours",
+        "required": true,
+        "type": "duration",
+        "unit": "H"
+      }
+    ],
+    "icon_code_point": 57563,
+    "id": "ac_hnsz5b8lif2",
+    "name": "Sleep"
   }
 ]
