@@ -222,7 +222,7 @@ class AppController extends StateNotifier<AppState> {
             final batch = RemoteStore.chunk(_run(ids, i, (o) => !o.dispatched)).first;
             await remote.dispatchBatch(batch);
             handled.addAll(batch.map((o) => o.id));
-            await _markDispatched({for (final o in batch) o.id});
+            await _markDispatched({for (final o in batch) o.id}, cfg);
             op = _find(ids[i]) ?? op;
             freshBatch = true;
           } else {
@@ -264,7 +264,7 @@ class AppController extends StateNotifier<AppState> {
               break;
           }
           done++;
-          await _resolve(op, res, PushProgress(done: done, total: total, running: true));
+          await _resolve(op, res, PushProgress(done: done, total: total, running: true), cfg);
         }
       } on RemoteException catch (e) {
         // Offline or GitHub refused: unsent operations stay queued (not marked
@@ -310,7 +310,8 @@ class AppController extends StateNotifier<AppState> {
     return out;
   }
 
-  Future<void> _markDispatched(Set<String> ids) async {
+  Future<void> _markDispatched(Set<String> ids, GithubConfig cfg) async {
+    if (!identical(state.github, cfg)) return; // disconnected: queue already cleared
     state = state.copyWith(ops: [for (final o in state.ops) ids.contains(o.id) ? o.markDispatched() : o]);
     await _local.saveOps(state.ops);
   }
@@ -318,7 +319,10 @@ class AppController extends StateNotifier<AppState> {
   /// A resolved operation leaves the queue. An accepted one now lives in the
   /// repository: fold it into the base right away, otherwise it would vanish
   /// from the view until the final pull.
-  Future<void> _resolve(Operation op, OpResult res, PushProgress progress) async {
+  Future<void> _resolve(Operation op, OpResult res, PushProgress progress, GithubConfig cfg) async {
+    // Each save is preceded by the guard with no await in between, so a
+    // disconnect can never be overwritten by a push still in flight.
+    if (!identical(state.github, cfg)) return;
     var base = state.base;
     if (res.ok) {
       final applied = applyOperation(base, op);
@@ -326,6 +330,7 @@ class AppController extends StateNotifier<AppState> {
     }
     state = state.copyWith(base: base, ops: state.ops.where((o) => o.id != op.id).toList(), push: progress);
     await _local.saveBase(state.base);
+    if (!identical(state.github, cfg)) return;
     await _local.saveOps(state.ops);
   }
 
@@ -378,9 +383,9 @@ class AppController extends StateNotifier<AppState> {
     final snap = await _remoteFactory(cfg).pull();
     if (!identical(state.github, cfg)) return; // disconnected/reconnected meanwhile
     final now = DateTime.now();
-    await _local.saveBase(snap);
-    await _local.saveLastSync(now);
     state = state.copyWith(base: snap, lastSync: now);
+    await _local.saveBase(snap); // no await between the guard and this save
+    await _local.saveLastSync(now);
   }
 
   // ---- GitHub connection ---------------------------------------------
@@ -404,6 +409,7 @@ class AppController extends StateNotifier<AppState> {
     state = state.copyWith(github: cfg, clearNotice: true);
     try {
       final remote = await _remote.pull();
+      if (!identical(state.github, cfg)) return report; // disconnected meanwhile
       final local = state.view;
       final ids = {
         for (final b in remote.branches) b.id,
@@ -422,9 +428,9 @@ class AppController extends StateNotifier<AppState> {
         for (final q in local.quests.where((q) => !ids.contains(q.id)))
           _op(OpAction.create, EntityType.quest, q.id, q.toJson()),
       ];
-      await _local.saveBase(remote);
-      await _local.saveOps(ops);
       state = state.copyWith(base: remote, ops: ops);
+      await _local.saveBase(remote);
+      if (identical(state.github, cfg)) await _local.saveOps(state.ops);
     } on RemoteException catch (e) {
       state = state.copyWith(notice: e.message);
     }
@@ -432,11 +438,13 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> disconnect() async {
+    // Switch state first, synchronously, so every in-flight push/pull guard
+    // (identical(state.github, cfg)) trips before anything else is persisted.
     final keep = state.view;
+    state = state.copyWith(github: const GithubConfig(), base: keep, ops: const [], clearNotice: true);
     await _local.clearGithub();
     await _local.saveBase(keep);
     await _local.saveOps(const []);
-    state = state.copyWith(github: const GithubConfig(), base: keep, ops: const [], clearNotice: true);
   }
 
   void dismissNotice() => state = state.copyWith(clearNotice: true);

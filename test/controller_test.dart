@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:personal_life_rpg/src/data/local_store.dart';
@@ -59,8 +61,17 @@ class FakeRemote implements RemoteStore {
   @override
   Future<Snapshot> pull() async {
     if (offline) throw RemoteException('No connection');
+    final gate = pullGate;
+    if (gate != null) {
+      if (!pullStarted.isCompleted) pullStarted.complete();
+      await gate.future;
+    }
     return data;
   }
+
+  /// When set, pull() waits for it (signalling [pullStarted] first).
+  Completer<void>? pullGate;
+  final Completer<void> pullStarted = Completer<void>();
 
   @override
   Future<ConnectionReport> check() async => const ConnectionReport(ok: true, message: 'ok', workflowInstalled: true, canWrite: true);
@@ -506,6 +517,34 @@ void main() {
     expect(c.state.ops, isEmpty);
     expect(c.state.syncing, isFalse);
     expect(c.state.push.running, isFalse);
+  });
+
+  test('disconnect while the final pull is in flight persists the kept view and an empty queue', () async {
+    // The pull is released at several points during disconnect's own awaits.
+    for (var k = 0; k < 40; k++) {
+      final (c, remote) = await setup();
+      await c.saveBranch(branch(), isNew: true);
+      remote.pullGate = Completer<void>();
+      final push = c.pushNow();
+      await c.saveBranch(branch('b2', 'Mind'), isNew: true); // queued during the push
+      await remote.pullStarted.future;
+      final keep = c.state.view.branches.map((b) => b.id).toList();
+      expect(keep, ['b1', 'b2']);
+      remote.data = Snapshot(branches: [branch('x', 'Remote only')]); // diverged remote
+      final d = c.disconnect();
+      for (var j = 0; j < k; j++) {
+        await Future<void>.microtask(() {}); // one microtask hop at a time
+      }
+      remote.pullGate!.complete();
+      await d;
+      await push;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      final store = LocalStore(prefs, MemorySecretStore());
+      expect(store.loadBase().branches.map((b) => b.id), keep, reason: 'k=$k persisted base');
+      expect(store.loadOps(), isEmpty, reason: 'k=$k persisted ops');
+      expect(c.state.view.branches.map((b) => b.id), keep, reason: 'k=$k view');
+      expect(c.state.github.isConfigured, isFalse);
+    }
   });
 
   test('syncNow pushes (thin wrapper until the UI moves to pushNow)', () async {
