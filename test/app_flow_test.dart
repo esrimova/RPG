@@ -8,8 +8,12 @@ import 'package:personal_life_rpg/src/data/remote_store.dart';
 import 'package:personal_life_rpg/src/domain/apply.dart';
 import 'package:personal_life_rpg/src/domain/goals.dart';
 import 'package:personal_life_rpg/src/domain/models.dart';
+import 'package:personal_life_rpg/src/domain/quests.dart';
 import 'package:personal_life_rpg/src/ui/editors.dart';
 import 'package:personal_life_rpg/src/ui/browser_page.dart';
+import 'package:personal_life_rpg/src/ui/home_page.dart';
+import 'package:personal_life_rpg/src/ui/quest_editor.dart';
+import 'package:personal_life_rpg/src/ui/quests_page.dart';
 import 'package:personal_life_rpg/src/state/app_controller.dart';
 import 'package:personal_life_rpg/src/state/providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -444,5 +448,279 @@ void main() {
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Push stopped'), findsNothing);
+  });
+
+  group('quests', () {
+    String day(int offset) {
+      final n = DateTime.now();
+      return dateKey(DateTime(n.year, n.month, n.day + offset));
+    }
+
+    Quest seedQuest({
+      String id = 'q1',
+      String name = 'Shed',
+      int start = 0,
+      int end = 6,
+      int xp = 100,
+      bool auto = false,
+      QuestPattern? pattern,
+      required List<(String, int, bool)> tasks, // name, date offset, checked
+    }) =>
+        Quest(
+          id: id,
+          name: name,
+          startDate: day(start),
+          endDate: day(end),
+          totalXp: xp,
+          auto: auto,
+          pattern: pattern,
+          createdAt: DateTime(2026),
+          tasks: [
+            for (final (i, t) in tasks.indexed)
+              QuestTask(id: '${id}_t$i', name: t.$1, date: day(t.$2), doneAt: t.$3 ? DateTime(2026) : null),
+          ],
+        );
+
+    Future<void> pickDate(WidgetTester tester, Finder button, String key) async {
+      await tester.ensureVisible(button);
+      await tester.pumpAndSettle();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Switch to input'));
+      await tester.pumpAndSettle();
+      final p = key.split('-').map(int.parse).toList();
+      await tester.enterText(find.descendant(of: find.byType(Dialog), matching: find.byType(TextField)), '${p[1]}/${p[2]}/${p[0]}');
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> tapText(WidgetTester tester, String text) async {
+      await tester.ensureVisible(find.text(text).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(text).last);
+      await tester.pumpAndSettle();
+    }
+
+    Widget questsHome() => const Scaffold(body: QuestsPage());
+
+    testWidgets('main screen always has a Quests page, even with no branches', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2200);
+      tester.view.devicePixelRatio = 2.75;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(await app());
+      await tester.pumpAndSettle();
+      expect(find.text('Start your journey'), findsOneWidget);
+      await tester.drag(find.byType(PageView), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('Quests'), findsOneWidget);
+      expect(find.text('New quest'), findsOneWidget);
+    });
+
+    testWidgets('with branches the Quests page sits before the add-branch page', (tester) async {
+      bigView(tester);
+      final (_, wrap) = await seeded();
+      await tester.pumpWidget(wrap(const BrowserPage()));
+      await tester.pumpAndSettle();
+      expect(find.text('Body'), findsOneWidget);
+      await tester.drag(find.byType(PageView), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('New quest'), findsOneWidget);
+      await tester.drag(find.byType(PageView), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('Add another branch'), findsOneWidget);
+    });
+
+    testWidgets('create: name, dates, points, 4 tasks every other day get dated in order', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await tester.pumpWidget(wrap(const QuestEditorPage()));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Build a shed');
+      await tester.enterText(find.widgetWithText(TextField, 'Total points'), '120');
+      await pickDate(tester, find.byKey(const Key('endDate')), day(6));
+      await tapText(tester, 'Every other day');
+      for (var i = 0; i < 4; i++) {
+        await tapText(tester, 'Add task');
+      }
+      final names = ['Cut wood', 'Frame', 'Roof', 'Paint'];
+      for (var i = 0; i < 4; i++) {
+        await tester.enterText(find.widgetWithText(TextField, 'Task name').at(i), names[i]);
+      }
+      await tester.pumpAndSettle();
+      await tapText(tester, 'Create quest');
+      final q = c.state.view.quests.single;
+      expect(q.name, 'Build a shed');
+      expect(q.totalXp, 120);
+      expect(q.startDate, day(0));
+      expect(q.endDate, day(6));
+      expect(q.auto, isTrue);
+      expect(q.pattern!.n, 2);
+      expect(q.tasks.map((t) => t.name), names);
+      expect(q.tasks.map((t) => t.date), [day(0), day(2), day(4), day(6)]);
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('create: weekdays-only preset stores Mon-Fri', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await tester.pumpWidget(wrap(const QuestEditorPage()));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Work week');
+      await tapText(tester, 'Weekdays only');
+      await tapText(tester, 'Add task');
+      await tester.enterText(find.widgetWithText(TextField, 'Task name'), 'Plan');
+      await tapText(tester, 'Create quest');
+      final q = c.state.view.quests.single;
+      expect(q.pattern!.type, 'weekdays');
+      expect(q.pattern!.days, [1, 2, 3, 4, 5]);
+      final d = DateTime.parse(q.tasks.single.date);
+      expect(d.weekday, lessThanOrEqualTo(5));
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('create: manual mode lets each task date be set', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await tester.pumpWidget(wrap(const QuestEditorPage()));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Hand-dated');
+      await tapText(tester, 'Manual');
+      await tapText(tester, 'Add task');
+      await tapText(tester, 'Add task');
+      await tester.enterText(find.widgetWithText(TextField, 'Task name').at(0), 'One');
+      await tester.enterText(find.widgetWithText(TextField, 'Task name').at(1), 'Two');
+      await pickDate(tester, find.byKey(const Key('taskDate-1')), day(3));
+      await tapText(tester, 'Create quest');
+      final q = c.state.view.quests.single;
+      expect(q.auto, isFalse);
+      expect(q.tasks.map((t) => t.date), [day(0), day(3)]);
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('checking a task updates progress and XP; Home includes quest XP', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await c.saveQuest(
+          seedQuest(tasks: [('Task A', 0, false), ('Task B', 1, false), ('Task C', 2, false), ('Task D', 3, false)]),
+          isNew: true);
+      await tester.pumpWidget(wrap(questsHome()));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('0/4 tasks'), findsOneWidget);
+      await tester.tap(find.text('Task A'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('1/4 tasks'), findsOneWidget);
+      expect(find.textContaining('+25 XP'), findsOneWidget);
+      expect(find.text('25 / 100 XP'), findsOneWidget); // Quests branch bar
+      expect(c.state.view.quests.single.tasks.first.doneAt, isNotNull);
+      // unchecking takes the share back
+      await tester.tap(find.text('Task A'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('0/4 tasks'), findsOneWidget);
+      await tester.tap(find.text('Task A'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Task B'));
+      await tester.pumpAndSettle();
+
+      await tester.pumpWidget(wrap(const HomePage()));
+      await tester.pumpAndSettle();
+      expect(find.text('50 XP total'), findsOneWidget);
+      expect(find.text('Quests'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('checking the last task completes the quest and moves it to History with full points', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await c.saveQuest(seedQuest(tasks: [('Task A', 0, true), ('Task B', 1, false)]), isNew: true);
+      await tester.pumpWidget(wrap(questsHome()));
+      await tester.pumpAndSettle();
+      expect(find.text('Completed'), findsNothing);
+      await tester.tap(find.text('Task B'));
+      await tester.pumpAndSettle();
+      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('100 XP'), findsOneWidget);
+      expect(find.byType(Checkbox), findsNothing); // no longer in the active list
+      expect(find.byTooltip('Edit quest'), findsNothing); // read-only
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('History shows Completed and Failed (0 points); finished quests can only be deleted', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await c.saveQuest(seedQuest(id: 'qa', name: 'Done one', start: -3, end: 2, tasks: [('A', -3, true)]), isNew: true);
+      await c.saveQuest(
+          seedQuest(id: 'qb', name: 'Missed one', start: -5, end: -1, tasks: [('B', -5, true), ('C', -2, false)]),
+          isNew: true);
+      await tester.pumpWidget(wrap(questsHome()));
+      await tester.pumpAndSettle();
+      expect(find.text('History'), findsOneWidget);
+      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('Failed'), findsOneWidget);
+      expect(find.text('100 XP'), findsOneWidget);
+      expect(find.text('0 XP'), findsOneWidget);
+      // the failed quest's earned share does not count: 100 XP -> level 2, 0 / 200
+      expect(find.text('Level 2'), findsOneWidget);
+      expect(find.text('0 / 200 XP'), findsOneWidget);
+      expect(find.byType(Checkbox), findsNothing);
+      expect(find.byTooltip('Edit quest'), findsNothing);
+      await tester.tap(find.byTooltip('Delete quest').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(c.state.view.quests.map((q) => q.name), ['Done one']);
+      expect(find.text('Failed'), findsNothing);
+    });
+
+    testWidgets('adding a task to an auto quest re-spreads open tasks only', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      final q = seedQuest(
+        start: -2,
+        end: 5,
+        auto: true,
+        pattern: QuestPattern.everyNDays(1),
+        tasks: [('Past', -2, false), ('Checked', 0, true), ('Open 1', 1, false), ('Open 2', 2, false)],
+      );
+      await c.saveQuest(q, isNew: true);
+      await tester.pumpWidget(wrap(QuestEditorPage(existing: c.state.view.quests.single)));
+      await tester.pumpAndSettle();
+      await tapText(tester, 'Add task');
+      await tester.enterText(find.widgetWithText(TextField, 'Task name').last, 'New');
+      await tapText(tester, 'Save changes');
+      final saved = c.state.view.quests.single;
+      expect(saved.tasks.map((t) => t.name), ['Past', 'Checked', 'Open 1', 'Open 2', 'New']);
+      expect(saved.tasks.map((t) => t.date), [day(-2), day(0), day(0), day(2), day(4)]);
+      expect(saved.tasks[1].doneAt, isNotNull);
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('editor refuses removing the last unchecked task', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await c.saveQuest(seedQuest(tasks: [('Checked', 0, true), ('Last open', 1, false)]), isNew: true);
+      await tester.pumpWidget(wrap(QuestEditorPage(existing: c.state.view.quests.single)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Remove task').at(1));
+      await tester.pumpAndSettle();
+      expect(find.text('Cannot complete a quest by removing tasks'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'Task name'), findsNWidgets(2));
+      expect(c.state.view.quests.single.tasks, hasLength(2));
+    });
+
+    testWidgets('auto quest with no matching dates left shows the error and saves nothing', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await c.saveQuest(
+          seedQuest(start: -1, end: 0, auto: true, pattern: QuestPattern.everyNDays(2), tasks: [('Past', -1, false)]),
+          isNew: true);
+      await tester.pumpWidget(wrap(QuestEditorPage(existing: c.state.view.quests.single)));
+      await tester.pumpAndSettle();
+      await tapText(tester, 'Add task');
+      await tester.enterText(find.widgetWithText(TextField, 'Task name').last, 'Nowhere');
+      await tapText(tester, 'Save changes');
+      expect(find.text('No matching dates left'), findsOneWidget);
+      expect(find.text('Save changes'), findsOneWidget); // still in the editor
+      expect(c.state.view.quests.single.tasks, hasLength(1));
+    });
   });
 }

@@ -5,6 +5,7 @@ import '../state/providers.dart';
 import 'common.dart';
 import 'icons.dart';
 import 'push_dialog.dart';
+import 'quests_page.dart' show questColor;
 import 'settings_page.dart';
 import 'theme.dart';
 
@@ -16,6 +17,7 @@ class HomePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final app = ref.watch(appProvider);
     final stats = ref.watch(playerStatsProvider);
+    final questLevel = levelForXp(ref.watch(questXpProvider));
     final s = app.view;
     return Scaffold(
       appBar: AppBar(title: const Text('Home')),
@@ -73,6 +75,13 @@ class HomePage extends ConsumerWidget {
               trailing: Text('Lv ${l.level}', style: TextStyle(color: color, fontWeight: FontWeight.w700)),
             );
           }),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.flag_outlined, color: questColor),
+          title: const Text('Quests'),
+          subtitle: Padding(padding: const EdgeInsets.only(top: 6), child: XpBar(fraction: questLevel.fraction, color: questColor, height: 6)),
+          trailing: Text('Lv ${questLevel.level}', style: const TextStyle(color: questColor, fontWeight: FontWeight.w700)),
+        ),
         if (app.github.isConfigured) ...[
           const SizedBox(height: 20),
           FilledButton.icon(

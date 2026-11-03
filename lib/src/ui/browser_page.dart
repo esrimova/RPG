@@ -11,11 +11,15 @@ import 'editors.dart';
 import 'home_page.dart';
 import 'icons.dart';
 import 'push_dialog.dart';
+import 'quests_page.dart';
 import 'settings_page.dart';
 import 'theme.dart';
 
 /// Main screen. Swipe left/right between branches, scroll up/down through the
 /// activities of the current branch. Home button is at the top right.
+///
+/// Pages: every branch, then the built-in Quests branch, then "add branch".
+/// With no branches yet the welcome page comes first, then Quests.
 class BrowserPage extends ConsumerStatefulWidget {
   const BrowserPage({super.key});
   @override
@@ -45,7 +49,8 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
   Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
     final branches = app.view.branches;
-    final count = branches.length + 1; // last page = "add branch"
+    final count = branches.length + 2; // + Quests + "add branch" (or the welcome page)
+    final questsIndex = branches.isEmpty ? 1 : branches.length;
     return Scaffold(
       body: SafeArea(
         child: Column(children: [
@@ -67,27 +72,28 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             ]),
           ),
           const NoticeBanner(),
-          if (branches.isNotEmpty) _dots(count, branches),
+          if (app.loaded) _dots(count, branches, questsIndex),
           Expanded(
             child: !app.loaded
                 ? const Center(child: CircularProgressIndicator())
-                : branches.isEmpty
-                    ? const _EmptyStart()
-                    : PageView.builder(
-                        controller: _pages,
-                        itemCount: count,
-                        onPageChanged: (i) => setState(() => _index = i),
-                        itemBuilder: (_, i) => i == branches.length
-                            ? const _AddBranchPage()
-                            : _BranchPage(key: ValueKey(branches[i].id), branchId: branches[i].id),
-                      ),
+                : PageView.builder(
+                    controller: _pages,
+                    itemCount: count,
+                    onPageChanged: (i) => setState(() => _index = i),
+                    itemBuilder: (_, i) {
+                      if (i == questsIndex) return const QuestsPage(key: ValueKey('quests'));
+                      if (branches.isEmpty) return const _EmptyStart();
+                      if (i == branches.length + 1) return const _AddBranchPage();
+                      return _BranchPage(key: ValueKey(branches[i].id), branchId: branches[i].id);
+                    },
+                  ),
           ),
         ]),
       ),
     );
   }
 
-  Widget _dots(int count, List<Branch> branches) => SizedBox(
+  Widget _dots(int count, List<Branch> branches, int questsIndex) => SizedBox(
         height: 28,
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           for (var i = 0; i < count; i++)
@@ -99,7 +105,11 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
                 width: i == _index ? 22 : 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: i == _index ? (i < branches.length ? Color(branches[i].color) : Pal.muted) : Pal.line,
+                  color: i != _index
+                      ? Pal.line
+                      : i == questsIndex
+                          ? questColor
+                          : (i < branches.length ? Color(branches[i].color) : Pal.muted),
                   borderRadius: BorderRadius.circular(4),
                 ),
               ),

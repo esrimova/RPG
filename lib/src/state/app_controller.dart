@@ -163,6 +163,9 @@ class AppController extends StateNotifier<AppState> {
   Future<OpResult> deleteActivity(String id) => submit(_op(OpAction.delete, EntityType.activity, id, {'id': id}));
   Future<OpResult> addRecord(Record r) => submit(_op(OpAction.create, EntityType.record, r.id, r.toJson()));
   Future<OpResult> deleteRecord(String id) => submit(_op(OpAction.delete, EntityType.record, id, {'id': id}));
+  Future<OpResult> saveQuest(Quest q, {required bool isNew}) =>
+      submit(_op(isNew ? OpAction.create : OpAction.update, EntityType.quest, q.id, q.toJson()));
+  Future<OpResult> deleteQuest(String id) => submit(_op(OpAction.delete, EntityType.quest, id, {'id': id}));
 
   // ---- pushing ------------------------------------------------------
 
