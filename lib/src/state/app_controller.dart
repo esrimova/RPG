@@ -1,9 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/local_store.dart';
 import '../data/remote_store.dart';
 import '../domain/apply.dart';
 import '../domain/models.dart';
+import '../domain/quests.dart' show dateKey;
+
+/// Where a running push is: [done] of [total] operations resolved.
+class PushProgress {
+  final int done;
+  final int total;
+  final bool running;
+  const PushProgress({this.done = 0, this.total = 0, this.running = false});
+}
 
 class AppState {
   final bool loaded;
@@ -11,10 +21,12 @@ class AppState {
   final List<Operation> ops; // changes not yet confirmed by GitHub
   final Snapshot view; // base + pending ops: what the UI shows
   final GithubConfig github;
-  final bool syncing;
+  final bool syncing; // true while pulling or pushing
   final DateTime? lastSync;
   final String? notice; // last problem worth telling the user about
   final ConnectionReport? connection;
+  final PushProgress push;
+  final List<PushLogEntry> pushLog; // newest first, at most 50
 
   const AppState({
     this.loaded = false,
@@ -26,9 +38,12 @@ class AppState {
     this.lastSync,
     this.notice,
     this.connection,
+    this.push = const PushProgress(),
+    this.pushLog = const [],
   });
 
   bool get hasPending => ops.isNotEmpty;
+  int get pendingCount => ops.length;
 
   AppState copyWith({
     bool? loaded,
@@ -40,6 +55,8 @@ class AppState {
     String? notice,
     bool clearNotice = false,
     ConnectionReport? connection,
+    PushProgress? push,
+    List<PushLogEntry>? pushLog,
   }) {
     final b = base ?? this.base;
     final o = ops ?? this.ops;
@@ -53,6 +70,8 @@ class AppState {
       lastSync: lastSync ?? this.lastSync,
       notice: clearNotice ? null : (notice ?? this.notice),
       connection: connection ?? this.connection,
+      push: push ?? this.push,
+      pushLog: pushLog ?? this.pushLog,
     );
   }
 }
@@ -67,31 +86,47 @@ class AppController extends StateNotifier<AppState> {
     this.pollUnit = const Duration(seconds: 1),
   }) : super(const AppState());
 
+  static const maxPushLog = 50;
+
   final LocalStore _local;
   final RemoteFactory _remoteFactory;
   final List<int> pollDelays;
   final Duration pollUnit;
-  final Map<String, Completer<OpResult>> _waiters = {};
-  bool _draining = false;
+  bool _pushing = false;
+  Future<void>? _pulling;
   int _idCounter = 0;
 
   String newId([String prefix = 'id']) =>
       '${prefix}_${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}${(_idCounter++).toRadixString(36)}';
 
+  /// Loads local data. When GitHub is connected it pulls (read-only); it never pushes.
   Future<void> init() async {
     final gh = await _local.loadGithub();
     final base = _local.loadBase();
     final ops = _local.loadOps();
-    state = state.copyWith(loaded: true, base: base, ops: ops, github: gh, lastSync: _local.loadLastSync());
-    if (gh.isConfigured) unawaited(syncNow());
+    state = state.copyWith(
+        loaded: true, base: base, ops: ops, github: gh, lastSync: _local.loadLastSync(), pushLog: _local.loadPushLog());
+    if (gh.isConfigured) _pulling = _launchPull();
+  }
+
+  Future<void> _launchPull() async {
+    state = state.copyWith(syncing: true);
+    try {
+      await _pull();
+    } on RemoteException catch (e) {
+      state = state.copyWith(notice: e.message);
+    } finally {
+      _pulling = null;
+      if (!_pushing) state = state.copyWith(syncing: false);
+    }
   }
 
   RemoteStore get _remote => _remoteFactory(state.github);
 
   // ---- writing ------------------------------------------------------
 
-  /// Applies [op] right away and, when GitHub is connected, syncs it. The
-  /// returned future completes when GitHub confirms/rejects (or times out).
+  /// Applies [op] to the view right away. Local-only: saved on the device.
+  /// Connected: queued until the user presses push; nothing is sent here.
   Future<OpResult> submit(Operation op) async {
     final r = applyOperation(state.view, op);
     if (!r.ok) return OpResult(OpOutcome.rejected, r.error!);
@@ -103,22 +138,23 @@ class AppController extends StateNotifier<AppState> {
       await _local.saveBase(r.snapshot);
       return const OpResult(OpOutcome.success, 'Saved on this device (GitHub not connected).');
     }
-    final ops = [...state.ops, op];
-    state = state.copyWith(ops: ops, clearNotice: true);
-    final c = _waiters[op.id] = Completer<OpResult>();
-    await _local.saveOps(ops);
-    unawaited(_drain());
-    return c.future;
+    state = state.copyWith(ops: [...state.ops, op], clearNotice: true);
+    await _local.saveOps(state.ops);
+    return const OpResult(OpOutcome.success, 'Saved - waiting for push');
   }
 
-  Operation _op(OpAction a, EntityType t, String id, Map<String, dynamic> payload) => Operation(
-        id: newId('op'),
-        action: a,
-        type: t,
-        entityId: id,
-        payload: payload,
-        createdAt: DateTime.now(),
-      );
+  Operation _op(OpAction a, EntityType t, String id, Map<String, dynamic> payload) {
+    final now = DateTime.now();
+    return Operation(
+      id: newId('op'),
+      action: a,
+      type: t,
+      entityId: id,
+      payload: payload,
+      createdAt: now,
+      localDate: dateKey(now),
+    );
+  }
 
   Future<OpResult> saveBranch(Branch b, {required bool isNew}) =>
       submit(_op(isNew ? OpAction.create : OpAction.update, EntityType.branch, b.id, b.toJson()));
@@ -128,89 +164,210 @@ class AppController extends StateNotifier<AppState> {
   Future<OpResult> deleteActivity(String id) => submit(_op(OpAction.delete, EntityType.activity, id, {'id': id}));
   Future<OpResult> addRecord(Record r) => submit(_op(OpAction.create, EntityType.record, r.id, r.toJson()));
   Future<OpResult> deleteRecord(String id) => submit(_op(OpAction.delete, EntityType.record, id, {'id': id}));
+  Future<OpResult> saveQuest(Quest q, {required bool isNew}) =>
+      submit(_op(isNew ? OpAction.create : OpAction.update, EntityType.quest, q.id, q.toJson()));
+  Future<OpResult> deleteQuest(String id) => submit(_op(OpAction.delete, EntityType.quest, id, {'id': id}));
 
-  // ---- syncing ------------------------------------------------------
+  // ---- pushing ------------------------------------------------------
 
-  Future<void> syncNow() async {
-    if (!state.github.isConfigured) return;
-    await _drain(forcePull: true);
+  /// Reads the repository (never sends anything). No-op while a push runs.
+  Future<void> refresh() async {
+    if (!state.github.isConfigured || _pushing) return;
+    final pulling = _pulling;
+    if (pulling != null) return pulling;
+    _pulling = _launchPull();
+    await _pulling;
   }
 
-  Future<void> _drain({bool forcePull = false}) async {
-    if (_draining) return;
-    _draining = true;
+  /// Sends every pending operation to GitHub, in order, in batches. Returns
+  /// the log entry, or null when nothing is pending, GitHub is not connected,
+  /// or a push is already running.
+  Future<PushLogEntry?> pushNow() async {
+    if (_pushing || !state.github.isConfigured || state.ops.isEmpty) return null;
+    _pushing = true;
     state = state.copyWith(syncing: true);
-    var failed = false;
-    var pulled = false;
+    final cfg = state.github;
+    final handled = <String>{}; // operations sent or checked in this push
+    var succeeded = 0, rejected = 0, failed = 0, done = 0, total = 0;
+    final reasons = <String>[];
+    String? stopNotice;
+    var canPull = true;
     try {
-      final remote = _remote;
-      while (state.ops.isNotEmpty) {
-        var op = state.ops.first;
-        OpResult res;
-        try {
+      final pulling = _pulling;
+      if (pulling != null) await pulling;
+      if (!identical(state.github, cfg) || state.ops.isEmpty) return null;
+
+      // Only what is queued now goes out; changes made meanwhile wait for the next push.
+      final work = _coalesce(state.base, state.ops);
+      state = state.copyWith(ops: work);
+      await _local.saveOps(state.ops);
+      final ids = [for (final o in work) o.id];
+      final sentBefore = {for (final o in work) if (o.dispatched) o.id};
+      final resent = <String>{};
+      total = ids.length;
+      state = state.copyWith(push: PushProgress(done: 0, total: total, running: true));
+      final remote = _remoteFactory(cfg);
+
+      try {
+        for (var i = 0; i < ids.length; i++) {
+          if (!identical(state.github, cfg)) {
+            canPull = false; // disconnected meanwhile: stop here
+            break;
+          }
+          var op = _find(ids[i]);
+          if (op == null) continue;
+          var freshBatch = false;
           if (!op.dispatched) {
-            await remote.dispatch(op);
-            op = op.markDispatched();
-            final ops = [op, ...state.ops.skip(1)];
-            await _local.saveOps(ops);
-            state = state.copyWith(ops: ops);
+            final batch = RemoteStore.chunk(_run(ids, i, (o) => !o.dispatched)).first;
+            await remote.dispatchBatch(batch);
+            handled.addAll(batch.map((o) => o.id));
+            await _markDispatched({for (final o in batch) o.id}, cfg);
+            op = _find(ids[i]) ?? op;
+            freshBatch = true;
+          } else {
+            handled.add(op.id);
           }
-          res = await _awaitResult(remote, op.id);
-        } on RemoteException catch (e) {
-          _finish(op.id, OpResult(OpOutcome.failed, e.message));
-          state = state.copyWith(notice: e.message);
-          failed = true;
-          break;
-        }
-        if (res.outcome == OpOutcome.pending) {
-          _finish(op.id, const OpResult(OpOutcome.pending, 'Still syncing in the background…'));
-          failed = true;
-          break;
-        }
-        final ops = state.ops.skip(1).toList();
-        // An accepted operation now lives in the repository: fold it into the base right away,
-        // otherwise it would vanish from the view until the final pull.
-        var base = state.base;
-        if (res.ok) {
-          final applied = applyOperation(base, op);
-          if (applied.ok) base = applied.snapshot;
-        }
-        await _local.saveBase(base);
-        await _local.saveOps(ops);
-        state = state.copyWith(base: base, ops: ops);
-        if (!res.ok) {
-          state = state.copyWith(notice: 'Change was not saved: ${res.message}');
-        }
-        if (state.ops.isEmpty) {
-          // Last one: refresh from the repository first so the caller sees the final state.
-          try {
-            await _pull();
-            pulled = true;
-          } on RemoteException catch (e) {
-            state = state.copyWith(notice: e.message);
+          // The first operation of a batch just sent waits for the workflow; the
+          // rest of it (and operations sent by an earlier push) are checked at once.
+          var res = await _awaitResult(remote, op.id, checkFirst: !freshBatch);
+          if (res.outcome == OpOutcome.pending && sentBefore.contains(op.id) && !resent.contains(op.id)) {
+            // Sent by an earlier push and still no status file after the usual
+            // wait: resend it, with the following ones in the same situation.
+            // The workflow skips an operation id that already has a status, so
+            // nothing is applied twice.
+            final batch = RemoteStore.chunk(
+                    _run(ids, i, (o) => o.dispatched && sentBefore.contains(o.id) && !resent.contains(o.id)))
+                .first;
+            await remote.dispatchBatch(batch);
+            resent.addAll(batch.map((o) => o.id));
+            res = await _awaitResult(remote, op.id);
           }
+          if (!identical(state.github, cfg)) {
+            canPull = false; // disconnected while waiting: leave local data alone
+            break;
+          }
+          if (res.outcome == OpOutcome.pending) {
+            stopNotice = 'GitHub has not finished yet; ${ids.length - done} change(s) stay queued for the next push.';
+            break;
+          }
+          switch (res.outcome) {
+            case OpOutcome.success:
+              succeeded++;
+            case OpOutcome.rejected:
+              rejected++;
+              reasons.add(res.message);
+            case OpOutcome.failed:
+              failed++;
+              reasons.add(res.message);
+            case OpOutcome.pending:
+              break;
+          }
+          done++;
+          await _resolve(op, res, PushProgress(done: done, total: total, running: true), cfg);
         }
-        _finish(op.id, res);
+      } on RemoteException catch (e) {
+        // Offline or GitHub refused: unsent operations stay queued (not marked
+        // dispatched); confirmed ones are already folded into the base.
+        stopNotice = e.message;
+        canPull = false;
       }
-      if ((!failed || forcePull) && !pulled) {
+
+      if (canPull && identical(state.github, cfg)) {
         try {
           await _pull();
         } on RemoteException catch (e) {
-          state = state.copyWith(notice: e.message);
+          stopNotice ??= e.message;
         }
       }
+      final entry = PushLogEntry(
+          time: DateTime.now(), sent: handled.length, succeeded: succeeded, rejected: rejected, failed: failed);
+      final log = [entry, ...state.pushLog].take(maxPushLog).toList();
+      await _local.savePushLog(log);
+      final notice = [
+        if (reasons.length == 1) 'Change was not saved: ${reasons.single}',
+        if (reasons.length > 1) '${reasons.length} changes were not saved: ${reasons.toSet().take(3).join('; ')}',
+        ?stopNotice,
+      ].join(' ');
+      state = state.copyWith(pushLog: log, notice: notice.isEmpty ? null : notice, clearNotice: notice.isEmpty);
+      return entry;
     } finally {
-      _draining = false;
-      state = state.copyWith(syncing: false);
+      _pushing = false;
+      state = state.copyWith(syncing: false, push: PushProgress(done: done, total: total, running: false));
     }
   }
 
-  void _finish(String id, OpResult r) {
-    final c = _waiters.remove(id);
-    if (c != null && !c.isCompleted) c.complete(r);
+  Operation? _find(String id) => state.ops.where((o) => o.id == id).firstOrNull;
+
+  /// The queued operations from `ids[i]` onward while [take] holds.
+  List<Operation> _run(List<String> ids, int i, bool Function(Operation) take) {
+    final out = <Operation>[];
+    for (var j = i; j < ids.length; j++) {
+      final o = _find(ids[j]);
+      if (o == null || !take(o)) break;
+      out.add(o);
+    }
+    return out;
   }
 
-  Future<OpResult> _awaitResult(RemoteStore remote, String opId) async {
+  Future<void> _markDispatched(Set<String> ids, GithubConfig cfg) async {
+    if (!identical(state.github, cfg)) return; // disconnected: queue already cleared
+    state = state.copyWith(ops: [for (final o in state.ops) ids.contains(o.id) ? o.markDispatched() : o]);
+    await _local.saveOps(state.ops);
+  }
+
+  /// A resolved operation leaves the queue. An accepted one now lives in the
+  /// repository: fold it into the base right away, otherwise it would vanish
+  /// from the view until the final pull.
+  Future<void> _resolve(Operation op, OpResult res, PushProgress progress, GithubConfig cfg) async {
+    // Each save is preceded by the guard with no await in between, so a
+    // disconnect can never be overwritten by a push still in flight.
+    if (!identical(state.github, cfg)) return;
+    var base = state.base;
+    if (res.ok) {
+      final applied = applyOperation(base, op);
+      if (applied.ok) base = applied.snapshot;
+    }
+    state = state.copyWith(base: base, ops: state.ops.where((o) => o.id != op.id).toList(), push: progress);
+    await _local.saveBase(state.base);
+    if (!identical(state.github, cfg)) return;
+    await _local.saveOps(state.ops);
+  }
+
+  /// Collapses consecutive, not yet dispatched updates of the same entity into
+  /// the latest one. Never touches creates, deletes or dispatched operations,
+  /// and keeps both when the latest alone would be judged differently than
+  /// step by step (e.g. quest task-removal rules compare with the prior state).
+  static List<Operation> _coalesce(Snapshot base, List<Operation> ops) {
+    final out = <Operation>[];
+    for (final op in ops) {
+      if (out.isNotEmpty) {
+        final prev = out.last;
+        final same = prev.action == OpAction.update &&
+            op.action == OpAction.update &&
+            !prev.dispatched &&
+            !op.dispatched &&
+            prev.type == op.type &&
+            prev.entityId == op.entityId;
+        if (same) {
+          final before = applyAll(base, out.sublist(0, out.length - 1));
+          final stepwise = applyOperation(before, prev);
+          final viaPrev = stepwise.ok && applyOperation(stepwise.snapshot, op).ok;
+          if (viaPrev && applyOperation(before, op).ok) {
+            out[out.length - 1] = op;
+            continue;
+          }
+        }
+      }
+      out.add(op);
+    }
+    return out;
+  }
+
+  Future<OpResult> _awaitResult(RemoteStore remote, String opId, {bool checkFirst = false}) async {
+    if (checkFirst) {
+      final now = await remote.status(opId);
+      if (now.outcome != OpOutcome.pending) return now;
+    }
     OpResult last = const OpResult(OpOutcome.pending, '');
     for (final d in pollDelays) {
       await Future<void>.delayed(pollUnit * d);
@@ -221,11 +378,13 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> _pull() async {
-    final snap = await _remote.pull();
+    final cfg = state.github;
+    final snap = await _remoteFactory(cfg).pull();
+    if (!identical(state.github, cfg)) return; // disconnected/reconnected meanwhile
     final now = DateTime.now();
-    await _local.saveBase(snap);
-    await _local.saveLastSync(now);
     state = state.copyWith(base: snap, lastSync: now);
+    await _local.saveBase(snap); // no await between the guard and this save
+    await _local.saveLastSync(now);
   }
 
   // ---- GitHub connection ---------------------------------------------
@@ -241,7 +400,9 @@ class AppController extends StateNotifier<AppState> {
   }
 
   /// Saves the connection and merges whatever exists locally with the
-  /// repository: nothing is lost, missing items are uploaded.
+  /// repository: items missing remotely are queued as creates and items whose
+  /// local copy differs are queued as updates, for the next push. Deletes are
+  /// not inferred (a local delete of a remote item is not recoverable here).
   Future<ConnectionReport> connect(GithubConfig cfg) async {
     final report = await testConnection(cfg);
     if (!report.ok) return report;
@@ -249,25 +410,38 @@ class AppController extends StateNotifier<AppState> {
     state = state.copyWith(github: cfg, clearNotice: true);
     try {
       final remote = await _remote.pull();
+      if (!identical(state.github, cfg)) return report; // disconnected meanwhile
       final local = state.view;
-      final ids = {
-        for (final b in remote.branches) b.id,
-        for (final a in remote.activities) a.id,
-        for (final r in remote.records) r.id,
-      };
-      final ops = <Operation>[
-        ...state.ops,
-        for (final b in local.branches.where((b) => !ids.contains(b.id)))
-          _op(OpAction.create, EntityType.branch, b.id, b.toJson()),
-        for (final a in local.activities.where((a) => !ids.contains(a.id)))
-          _op(OpAction.create, EntityType.activity, a.id, a.toJson()),
-        for (final r in local.records.where((r) => !ids.contains(r.id)))
-          _op(OpAction.create, EntityType.record, r.id, r.toJson()),
-      ];
-      await _local.saveBase(remote);
-      await _local.saveOps(ops);
+      // What the repository will hold once the operations already queued apply.
+      var merged = applyAll(remote, state.ops);
+      final added = <Operation>[];
+      void reconcile<T>(EntityType t, List<T> mine, List<T> Function(Snapshot) theirs, String Function(T) id,
+          Map<String, dynamic> Function(T) json) {
+        for (final item in mine) {
+          final there = theirs(merged).where((o) => id(o) == id(item)).firstOrNull;
+          if (there == null) {
+            final op = _op(OpAction.create, t, id(item), json(item));
+            added.add(op);
+            merged = applyAll(merged, [op]);
+          } else if (jsonEncode(json(there)) != jsonEncode(json(item))) {
+            final op = _op(OpAction.update, t, id(item), json(item));
+            final r = applyOperation(merged, op);
+            if (!r.ok) continue; // would be rejected anyway (e.g. a finished quest)
+            added.add(op);
+            merged = r.snapshot;
+          }
+        }
+      }
+
+      reconcile<Branch>(EntityType.branch, local.branches, (s) => s.branches, (b) => b.id, (b) => b.toJson());
+      reconcile<Activity>(
+          EntityType.activity, local.activities, (s) => s.activities, (a) => a.id, (a) => a.toJson());
+      reconcile<Record>(EntityType.record, local.records, (s) => s.records, (r) => r.id, (r) => r.toJson());
+      reconcile<Quest>(EntityType.quest, local.quests, (s) => s.quests, (q) => q.id, (q) => q.toJson());
+      final ops = [...state.ops, ...added];
       state = state.copyWith(base: remote, ops: ops);
-      unawaited(_drain(forcePull: true));
+      await _local.saveBase(remote);
+      if (identical(state.github, cfg)) await _local.saveOps(state.ops);
     } on RemoteException catch (e) {
       state = state.copyWith(notice: e.message);
     }
@@ -275,11 +449,13 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> disconnect() async {
+    // Switch state first, synchronously, so every in-flight push/pull guard
+    // (identical(state.github, cfg)) trips before anything else is persisted.
     final keep = state.view;
+    state = state.copyWith(github: const GithubConfig(), base: keep, ops: const [], clearNotice: true);
     await _local.clearGithub();
     await _local.saveBase(keep);
     await _local.saveOps(const []);
-    state = state.copyWith(github: const GithubConfig(), base: keep, ops: const [], clearNotice: true);
   }
 
   void dismissNotice() => state = state.copyWith(clearNotice: true);

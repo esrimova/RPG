@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/local_store.dart';
 import '../data/remote_store.dart';
 import '../domain/progress.dart';
+import '../domain/quests.dart';
 import 'app_controller.dart';
 
 final prefsProvider = Provider<SharedPreferences>((_) => throw UnimplementedError('override in main'));
@@ -18,7 +19,14 @@ final appProvider = StateNotifierProvider<AppController, AppState>((ref) {
   return c;
 });
 
-/// Derived player numbers, always computed from the records.
+/// The clock used for derived, date-dependent values (quest status, streaks).
+/// Read it on each use so the date stays current; override it in tests.
+final clockProvider = Provider<DateTime Function()>((_) => DateTime.now);
+
+/// Today's local date as `YYYY-MM-DD`.
+String todayKey(DateTime Function() clock) => dateKey(clock());
+
+/// Derived player numbers, always computed from the records and quests.
 class PlayerStats {
   final int totalXp;
   final LevelInfo level;
@@ -29,7 +37,13 @@ class PlayerStats {
 
 final playerStatsProvider = Provider<PlayerStats>((ref) {
   final s = ref.watch(appProvider.select((a) => a.view));
-  final now = DateTime.now();
-  final xp = xpOf(s.records);
+  final now = ref.watch(clockProvider)();
+  final xp = playerXp(s, dateKey(now));
   return PlayerStats(xp, levelForXp(xp), computeStreak(s.records, now), computeBadges(s, now));
+});
+
+/// XP of the built-in Quests branch: the derived points of every quest.
+final questXpProvider = Provider<int>((ref) {
+  final quests = ref.watch(appProvider.select((a) => a.view.quests));
+  return totalQuestXp(quests, todayKey(ref.watch(clockProvider)));
 });

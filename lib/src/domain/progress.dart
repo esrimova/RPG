@@ -1,4 +1,5 @@
 import 'models.dart';
+import 'quests.dart';
 
 /// Level maths. Going from level n to n+1 costs 100*n XP, so reaching level L
 /// takes 50*L*(L-1) XP in total.
@@ -100,3 +101,6 @@ Improvement? improvement(Snapshot s, Activity a) {
 }
 
 int xpOf(Iterable<Record> records) => records.fold(0, (s, r) => s + r.xpEarned);
+
+/// Record XP plus the derived XP of every quest.
+int playerXp(Snapshot s, String today) => xpOf(s.records) + totalQuestXp(s.quests, today);

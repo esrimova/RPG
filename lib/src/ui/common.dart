@@ -34,7 +34,7 @@ class SyncChip extends ConsumerWidget {
       icon = Icons.sync;
       color = Pal.cyan;
     } else if (a.hasPending) {
-      label = '${a.ops.length} pending';
+      label = '${a.pendingCount} pending';
       icon = Icons.cloud_upload_outlined;
       color = Pal.yellow;
     } else {

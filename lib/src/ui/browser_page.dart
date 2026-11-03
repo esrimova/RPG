@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../domain/goals.dart';
 import '../domain/models.dart';
 import '../domain/progress.dart';
 import '../state/app_controller.dart';
@@ -9,11 +10,16 @@ import 'common.dart';
 import 'editors.dart';
 import 'home_page.dart';
 import 'icons.dart';
+import 'push_dialog.dart';
+import 'quests_page.dart';
 import 'settings_page.dart';
 import 'theme.dart';
 
 /// Main screen. Swipe left/right between branches, scroll up/down through the
 /// activities of the current branch. Home button is at the top right.
+///
+/// Pages: every branch, then the built-in Quests branch, then "add branch".
+/// With no branches yet the welcome page comes first, then Quests.
 class BrowserPage extends ConsumerStatefulWidget {
   const BrowserPage({super.key});
   @override
@@ -35,16 +41,31 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     if (!app.github.isConfigured) {
       Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsPage()));
     } else if (!app.syncing) {
-      ref.read(appProvider.notifier).syncNow();
-      toast(context, 'Syncing with GitHub…');
+      showPushDialog(context, ref);
     }
+  }
+
+  /// After a branch is created here, show it instead of the Quests page that
+  /// now sits at this index.
+  Future<void> _addBranch() async {
+    final before = ref.read(appProvider).view.branches.length;
+    await showBranchEditor(context);
+    if (!mounted) return;
+    final n = ref.read(appProvider).view.branches.length;
+    if (n <= before) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _pages.hasClients) {
+        _pages.animateToPage(n - 1, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
     final branches = app.view.branches;
-    final count = branches.length + 1; // last page = "add branch"
+    final count = branches.length + 2; // + Quests + "add branch" (or the welcome page)
+    final questsIndex = branches.isEmpty ? 1 : branches.length;
     return Scaffold(
       body: SafeArea(
         child: Column(children: [
@@ -66,27 +87,28 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
             ]),
           ),
           const NoticeBanner(),
-          if (branches.isNotEmpty) _dots(count, branches),
+          if (app.loaded) _dots(count, branches, questsIndex),
           Expanded(
             child: !app.loaded
                 ? const Center(child: CircularProgressIndicator())
-                : branches.isEmpty
-                    ? const _EmptyStart()
-                    : PageView.builder(
-                        controller: _pages,
-                        itemCount: count,
-                        onPageChanged: (i) => setState(() => _index = i),
-                        itemBuilder: (_, i) => i == branches.length
-                            ? const _AddBranchPage()
-                            : _BranchPage(key: ValueKey(branches[i].id), branchId: branches[i].id),
-                      ),
+                : PageView.builder(
+                    controller: _pages,
+                    itemCount: count,
+                    onPageChanged: (i) => setState(() => _index = i),
+                    itemBuilder: (_, i) {
+                      if (i == questsIndex) return const QuestsPage(key: ValueKey('quests'));
+                      if (branches.isEmpty) return const _EmptyStart();
+                      if (i == branches.length + 1) return _AddBranchPage(onAdd: _addBranch);
+                      return _BranchPage(key: ValueKey(branches[i].id), branchId: branches[i].id);
+                    },
+                  ),
           ),
         ]),
       ),
     );
   }
 
-  Widget _dots(int count, List<Branch> branches) => SizedBox(
+  Widget _dots(int count, List<Branch> branches, int questsIndex) => SizedBox(
         height: 28,
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           for (var i = 0; i < count; i++)
@@ -98,7 +120,11 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
                 width: i == _index ? 22 : 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: i == _index ? (i < branches.length ? Color(branches[i].color) : Pal.muted) : Pal.line,
+                  color: i != _index
+                      ? Pal.line
+                      : i == questsIndex
+                          ? questColor
+                          : (i < branches.length ? Color(branches[i].color) : Pal.muted),
                   borderRadius: BorderRadius.circular(4),
                 ),
               ),
@@ -131,13 +157,14 @@ class _EmptyStart extends ConsumerWidget {
 }
 
 class _AddBranchPage extends StatelessWidget {
-  const _AddBranchPage();
+  const _AddBranchPage({required this.onAdd});
+  final VoidCallback onAdd;
   @override
   Widget build(BuildContext context) => Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           const Icon(Icons.add_circle_outline, size: 56, color: Pal.muted),
           const SizedBox(height: 12),
-          OutlinedButton(onPressed: () => showBranchEditor(context), child: const Text('Add another branch')),
+          OutlinedButton(onPressed: onAdd, child: const Text('Add another branch')),
         ]),
       );
 }
@@ -230,6 +257,38 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
     super.dispose();
   }
 
+  ActivityField? get _goalField {
+    if (a.goal == null || a.goalFieldId == null) return null;
+    for (final f in a.fields) {
+      if (f.id == a.goalFieldId && (f.type == FieldType.number || f.type == FieldType.duration)) return f;
+    }
+    return null;
+  }
+
+  /// Value typed in the goal field, in stored units (seconds for durations); 0 when empty or invalid.
+  double _goalValue(ActivityField f) {
+    final n = double.tryParse(_ctl(f.id).text.trim().replaceAll(',', '.'));
+    if (n == null || n < 0) return 0;
+    return f.type == FieldType.duration ? (n * 60).roundToDouble() : n;
+  }
+
+  /// Points this record would earn right now.
+  int get _points {
+    final f = _goalField;
+    if (f == null) return a.baseXp;
+    return goalXp(baseXp: a.baseXp, value: _goalValue(f), goal: a.goal!);
+  }
+
+  String? get _preview {
+    final f = _goalField;
+    if (f == null) return null;
+    final v = _goalValue(f);
+    final g = a.goal!;
+    final d = f.type == FieldType.duration ? 60 : 1;
+    final pct = (v / g * 100).round();
+    return '${_n(v / d)} / ${_n(g / d)} = $pct% → +$_points XP';
+  }
+
   Future<void> _record() async {
     final values = <String, dynamic>{};
     for (final f in a.fields) {
@@ -238,7 +297,7 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
         case FieldType.duration:
           final raw = _ctl(f.id).text.trim().replaceAll(',', '.');
           if (raw.isEmpty) {
-            if (f.required) return setState(() => _error = 'Enter ${f.name}.');
+            if (f.required || f.id == _goalField?.id) return setState(() => _error = 'Enter ${f.name}.');
             continue;
           }
           final n = double.tryParse(raw);
@@ -266,8 +325,10 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
       branchId: a.branchId,
       timestamp: DateTime.now(),
       values: values,
-      xpEarned: a.baseXp,
+      xpEarned: _points,
+      goal: _goalField == null ? null : a.goal,
     );
+    final earned = rec.xpEarned;
     final before = ref.read(playerStatsProvider).level.level;
     final r = await c.addRecord(rec);
     if (!mounted) return;
@@ -282,7 +343,7 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
     _bool.clear();
     setState(() {});
     final after = ref.read(playerStatsProvider).level.level;
-    toast(context, after > before ? 'Recorded +${a.baseXp} XP. Level up! You are now level $after.' : 'Recorded +${a.baseXp} XP');
+    toast(context, after > before ? 'Recorded +$earned XP. Level up! You are now level $after.' : 'Recorded +$earned XP');
   }
 
   @override
@@ -325,13 +386,15 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
           const SizedBox(height: 10),
           for (final f in a.fields) _fieldInput(f, last),
           if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_error!, style: const TextStyle(color: Pal.red, fontSize: 13))),
+          if (_preview != null)
+            Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_preview!, style: TextStyle(color: color, fontSize: 13))),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
               style: FilledButton.styleFrom(backgroundColor: color, foregroundColor: Colors.black),
               onPressed: _record,
               icon: const Icon(Icons.check),
-              label: Text('Record  (+${a.baseXp} XP)'),
+              label: Text('Record  (+$_points XP)'),
             ),
           ),
         ]),
@@ -353,7 +416,7 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
           padding: const EdgeInsets.only(bottom: 10),
           child: TextField(
             controller: _ctl(f.id),
-            onChanged: (_) { if (_error != null) setState(() => _error = null); },
+            onChanged: (_) => setState(() => _error = null),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: InputDecoration(labelText: f.type == FieldType.duration ? '$label - minutes' : label, hintText: hint),
           ),
@@ -410,6 +473,19 @@ void showHistory(BuildContext context, Activity a) {
   );
 }
 
+/// "`xp` XP · `pct`%" for a record made with a goal, measured against the goal
+/// stored on the record. Records keep no goal field id, so the activity's
+/// current goal field (or its first number/duration field) is used.
+String? _goalShare(Activity a, Record r) {
+  final g = r.goal;
+  if (g == null || g <= 0) return null;
+  bool countable(ActivityField f) => f.type == FieldType.number || f.type == FieldType.duration;
+  final f = a.fields.where((f) => f.id == a.goalFieldId && countable(f)).firstOrNull ?? a.fields.where(countable).firstOrNull;
+  final v = f == null ? null : r.values[f.id];
+  if (v is! num) return null;
+  return '${r.xpEarned} XP · ${(v / g * 100).round()}%';
+}
+
 class _HistorySheet extends ConsumerWidget {
   const _HistorySheet({required this.activityId, required this.scroll});
   final String activityId;
@@ -438,7 +514,10 @@ class _HistorySheet extends ConsumerWidget {
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(a.fields.isEmpty ? 'Done' : a.fields.map((f) => '${f.name}: ${formatValue(f, r.values[f.id])}').join('   ')),
-          subtitle: Text(DateFormat.yMMMd().add_Hm().format(r.timestamp.toLocal())),
+          subtitle: Text([
+            DateFormat.yMMMd().add_Hm().format(r.timestamp.toLocal()),
+            ?_goalShare(a, r),
+          ].join(' · ')),
           trailing: IconButton(
             icon: const Icon(Icons.delete_outline, color: Pal.muted),
             onPressed: () async {
