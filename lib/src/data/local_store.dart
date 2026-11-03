@@ -43,6 +43,38 @@ class GithubConfig {
   bool get isConfigured => repo.isNotEmpty && pat.isNotEmpty;
 }
 
+/// One press of "Push to GitHub": how many operations went out and how they ended.
+class PushLogEntry {
+  final DateTime time;
+  final int sent;
+  final int succeeded;
+  final int rejected;
+  final int failed;
+  const PushLogEntry({
+    required this.time,
+    required this.sent,
+    required this.succeeded,
+    required this.rejected,
+    required this.failed,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'time': time.toIso8601String(),
+        'sent': sent,
+        'succeeded': succeeded,
+        'rejected': rejected,
+        'failed': failed,
+      };
+
+  factory PushLogEntry.fromJson(Map<String, dynamic> j) => PushLogEntry(
+        time: DateTime.parse(j['time'] as String),
+        sent: (j['sent'] as num).toInt(),
+        succeeded: (j['succeeded'] as num).toInt(),
+        rejected: (j['rejected'] as num).toInt(),
+        failed: (j['failed'] as num).toInt(),
+      );
+}
+
 class LocalStore {
   LocalStore(this._prefs, this._secrets);
   final SharedPreferences _prefs;
@@ -51,6 +83,29 @@ class LocalStore {
   static const _base = 'rpg_base_v2';
   static const _ops = 'rpg_ops_v2';
   static const _lastSync = 'rpg_last_sync_v2';
+  static const _pushLog = 'rpg_push_log_v1';
+
+  /// Newest first.
+  List<PushLogEntry> loadPushLog() {
+    final s = _prefs.getString(_pushLog);
+    if (s == null || s.isEmpty) return [];
+    try {
+      final out = <PushLogEntry>[];
+      for (final e in jsonDecode(s) as List) {
+        try {
+          out.add(PushLogEntry.fromJson(Map<String, dynamic>.from(e as Map)));
+        } catch (_) {
+          // skip a malformed entry
+        }
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> savePushLog(List<PushLogEntry> log) =>
+      _prefs.setString(_pushLog, jsonEncode(log.map((e) => e.toJson()).toList()));
 
   Snapshot loadBase() {
     final s = _prefs.getString(_base);

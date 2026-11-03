@@ -20,9 +20,6 @@ class ConnectionReport {
 
 /// Everything the app needs from the GitHub repository.
 abstract class RemoteStore {
-  /// Fires the workflow for [op]. Throws [RemoteException] when it can't be sent.
-  Future<void> dispatch(Operation op);
-
   /// Fires the workflow once for all [ops] (at most 25 / ~48 KB; see [chunk]).
   /// Throws [RemoteException] when it can't be sent.
   Future<void> dispatchBatch(List<Operation> ops);
@@ -112,28 +109,6 @@ class GithubRemoteStore implements RemoteStore {
 
   Never _net(DioException e, String doing) =>
       throw RemoteException('No connection to GitHub while $doing (${e.type.name}).');
-
-  @override
-  Future<void> dispatch(Operation op) async {
-    try {
-      final r = await _dio.post('/repos/$repo/dispatches', data: {
-        'event_type': 'rpg_operation',
-        'client_payload': {
-          'operation_id': op.id,
-          'action': op.action.name,
-          'entity_type': op.type.name,
-          'entity_id': op.entityId,
-          'payload': op.payload,
-        },
-      });
-      if (r.statusCode != 204) {
-        final retry = (r.statusCode ?? 500) >= 500;
-        throw RemoteException(_explain(r, 'starting the sync'), retryable: retry);
-      }
-    } on DioException catch (e) {
-      _net(e, 'starting the sync');
-    }
-  }
 
   @override
   Future<void> dispatchBatch(List<Operation> ops) async {
