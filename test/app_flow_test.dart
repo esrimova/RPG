@@ -234,6 +234,37 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
   });
 
+  testWidgets('goal UI: legacy optional goal field is required when recording', (tester) async {
+    bigView(tester);
+    final base = goalActivity();
+    final legacy = base.copyWith(fields: const [ActivityField(id: 'f1', name: 'Km', type: FieldType.number, required: false)]);
+    final (c, wrap) = await seeded(legacy);
+    await tester.pumpWidget(wrap(Scaffold(body: ListView(children: [ActivityCard(activity: legacy)]))));
+    await tester.tap(find.textContaining('Record  ('));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter Km.'), findsOneWidget);
+    expect(c.state.view.records, isEmpty);
+  });
+
+  testWidgets('goal UI: duration goal previews in minutes and saves seconds', (tester) async {
+    bigView(tester);
+    final dur = Activity(
+        id: 'd', branchId: 'b', name: 'Plank', color: 0xFF4CAF50, iconCodePoint: 0xe318, baseXp: 10,
+        fields: const [ActivityField(id: 'f1', name: 'Time', type: FieldType.duration)],
+        goal: 1800, goalFieldId: 'f1', createdAt: DateTime(2026));
+    final (c, wrap) = await seeded(dur);
+    await tester.pumpWidget(wrap(Scaffold(body: ListView(children: [ActivityCard(activity: dur)]))));
+    await tester.enterText(find.widgetWithText(TextField, 'Time - minutes'), '15');
+    await tester.pump();
+    expect(find.text('15 / 30 = 50% → +5 XP'), findsOneWidget);
+    await tester.tap(find.textContaining('Record  ('));
+    await tester.pumpAndSettle();
+    final r = c.state.view.records.single;
+    expect(r.xpEarned, 5);
+    expect(r.goal, 1800);
+    await tester.pump(const Duration(seconds: 10));
+  });
+
   testWidgets('activities without a goal still earn base XP and show no preview', (tester) async {
     bigView(tester);
     final plain = Activity(

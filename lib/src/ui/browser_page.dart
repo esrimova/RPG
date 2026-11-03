@@ -271,7 +271,7 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
         case FieldType.duration:
           final raw = _ctl(f.id).text.trim().replaceAll(',', '.');
           if (raw.isEmpty) {
-            if (f.required) return setState(() => _error = 'Enter ${f.name}.');
+            if (f.required || f.id == _goalField?.id) return setState(() => _error = 'Enter ${f.name}.');
             continue;
           }
           final n = double.tryParse(raw);
