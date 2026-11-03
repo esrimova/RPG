@@ -269,6 +269,65 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
   });
 
+  testWidgets('goal UI: history shows the percentage of each record against its own goal', (tester) async {
+    bigView(tester);
+    final (c, wrap) = await seeded(goalActivity());
+    Record rec(String id, int day, num value, int xp, double goal) => Record(
+        id: id, activityId: 'a', branchId: 'b', timestamp: DateTime(2026, 1, day), values: {'f1': value}, xpEarned: xp, goal: goal);
+    await c.addRecord(rec('r1', 1, 5, 5, 10));
+    await c.addRecord(rec('r2', 2, 20, 20, 10));
+    await tester.pumpWidget(wrap(Scaffold(body: ListView(children: [ActivityCard(activity: goalActivity())]))));
+    await tester.tap(find.byTooltip('History'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('5 XP · 50%'), findsOneWidget);
+    expect(find.textContaining('20 XP · 200%'), findsOneWidget);
+    // the goal changes later: old records keep their own goal
+    await c.saveActivity(goalActivity(goal: 20), isNew: false);
+    await c.addRecord(rec('r3', 3, 5, goalXp(baseXp: 10, value: 5, goal: 20), 20));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('5 XP · 50%'), findsOneWidget);
+    expect(find.textContaining('20 XP · 200%'), findsOneWidget);
+    expect(find.textContaining('3 XP · 25%'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 10));
+  });
+
+  testWidgets('goal UI: history of records without a goal shows no percentage', (tester) async {
+    bigView(tester);
+    final plain = Activity(
+        id: 'p', branchId: 'b', name: 'Read', color: 0xFF4CAF50, iconCodePoint: 0xe318, baseXp: 7,
+        fields: const [ActivityField(id: 'f1', name: 'Pages', type: FieldType.number)], createdAt: DateTime(2026));
+    final (c, wrap) = await seeded(plain);
+    await c.addRecord(Record(
+        id: 'r1', activityId: 'p', branchId: 'b', timestamp: DateTime(2026, 1, 1), values: {'f1': 3}, xpEarned: 7));
+    await tester.pumpWidget(wrap(Scaffold(body: ListView(children: [ActivityCard(activity: plain)]))));
+    await tester.tap(find.byTooltip('History'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Pages: 3'), findsOneWidget);
+    expect(find.textContaining('%'), findsNothing);
+  });
+
+  testWidgets('goal UI: a 4.1 minute duration goal is stored as 246 whole seconds', (tester) async {
+    bigView(tester);
+    final (c, wrap) = await seeded();
+    await tester.pumpWidget(wrap(const ActivityEditorPage(branchId: 'b')));
+    await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Plank');
+    await tester.tap(find.text('Add field'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Field name'), 'Time');
+    await tester.tap(find.byType(DropdownButtonFormField<FieldType>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Duration').last);
+    await tester.pumpAndSettle();
+    // 4.1 * 60 is 245.99999999999997 in floating point
+    await tester.enterText(find.widgetWithText(TextField, 'Goal'), '4.1');
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Create activity'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create activity'));
+    await tester.pumpAndSettle();
+    expect(c.state.view.activities.single.goal, 246);
+  });
+
   testWidgets('activities without a goal still earn base XP and show no preview', (tester) async {
     bigView(tester);
     final plain = Activity(
@@ -393,6 +452,41 @@ void main() {
     expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Push to GitHub (0)')).onPressed, isNull);
     expect(find.textContaining('Last push'), findsOneWidget);
     expect(find.text('Push log'), findsOneWidget);
+  });
+
+  Future<void> openSettings(WidgetTester tester, Widget widget) async {
+    tester.view.physicalSize = const Size(1080, 2600);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(widget);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Home'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Configuration'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Disconnect'), 300, scrollable: find.byType(Scrollable).first);
+    await tester.ensureVisible(find.text('Disconnect'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('settings: connected shows Update (not sync); disconnect warns about unpushed changes', (tester) async {
+    final (widget, _) = await connectedApp();
+    await openSettings(tester, widget);
+    expect(find.text('Update'), findsOneWidget);
+    expect(find.text('Update & sync'), findsNothing);
+    await tester.tap(find.text('Disconnect'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('2 change(s) are not pushed to GitHub and could be lost if you reconnect - push first'),
+        findsOneWidget);
+  });
+
+  testWidgets('settings: disconnect with nothing pending keeps the plain confirmation', (tester) async {
+    final (widget, _) = await connectedApp(pending: 0);
+    await openSettings(tester, widget);
+    await tester.tap(find.text('Disconnect'));
+    await tester.pumpAndSettle();
+    expect(find.text('Data stays on this phone but will no longer sync.'), findsOneWidget);
+    expect(find.textContaining('not pushed'), findsNothing);
   });
 
   testWidgets('sync chip: connected shows pending count and opens the push dialog', (tester) async {
@@ -528,6 +622,47 @@ void main() {
       await tester.drag(find.byType(PageView), const Offset(-500, 0));
       await tester.pumpAndSettle();
       expect(find.text('Add another branch'), findsOneWidget);
+    });
+
+    testWidgets('adding a branch from the add-branch page shows the new branch', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await tester.pumpWidget(wrap(const BrowserPage()));
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 2; i++) {
+        await tester.drag(find.byType(PageView), const Offset(-500, 0));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.text('Add another branch'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Mind');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(c.state.view.branches.map((b) => b.name), ['Body', 'Mind']);
+      expect(find.text('Mind'), findsOneWidget);
+      expect(find.text('New quest'), findsNothing);
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('saving only the description of an auto quest keeps every task date', (tester) async {
+      bigView(tester);
+      final (c, wrap) = await seeded();
+      await c.saveQuest(
+          seedQuest(
+              start: -2,
+              end: 5,
+              auto: true,
+              pattern: QuestPattern.everyNDays(1),
+              tasks: [('First', -2, false), ('Last', 5, false)]),
+          isNew: true);
+      await tester.pumpWidget(wrap(QuestEditorPage(existing: c.state.view.quests.single)));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Description (optional)'), 'Just words');
+      await tapText(tester, 'Save changes');
+      final saved = c.state.view.quests.single;
+      expect(saved.description, 'Just words');
+      expect(saved.tasks.map((t) => t.date), [day(-2), day(5)]);
+      await tester.pump(const Duration(seconds: 10));
     });
 
     testWidgets('create: name, dates, points, 4 tasks every other day get dated in order', (tester) async {

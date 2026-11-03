@@ -191,7 +191,9 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
       if (gf == null) return setState(() => _error = 'A goal needs a number or duration field to count. Add one or clear the goal.');
       final g = double.tryParse(_goal.text.trim().replaceAll(',', '.'));
       if (g == null || g <= 0) return setState(() => _error = 'The goal must be a number greater than 0.');
-      goal = gf.type == FieldType.duration ? g * 60 : g;
+      // Whole seconds, rounded like the record entry rounds a duration value.
+      goal = gf.type == FieldType.duration ? (g * 60).roundToDouble() : g;
+      if (goal <= 0) return setState(() => _error = 'The goal must be a number greater than 0.');
     }
 
     setState(() {

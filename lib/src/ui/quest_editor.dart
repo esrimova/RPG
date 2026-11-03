@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/models.dart';
@@ -164,7 +166,7 @@ class _QuestEditorPageState extends ConsumerState<QuestEditorPage> {
         final dates = spreadDates(from: _start, end: _end, pattern: pattern!, anchor: _start, count: q.tasks.length);
         if (dates.isEmpty) return (null, 'No matching dates left');
         q = q.copyWith(tasks: [for (final (i, t) in q.tasks.indexed) t.copyWith(date: dates[i])]);
-      } else {
+      } else if (_planChanged(q)) {
         try {
           q = respreadTasks(q, _today);
         } on StateError catch (e) {
@@ -173,6 +175,19 @@ class _QuestEditorPageState extends ConsumerState<QuestEditorPage> {
       }
     }
     return (q, null);
+  }
+
+  /// Whether an edit of an existing quest touches what auto dating depends on:
+  /// the task list (added, removed, renamed, reordered), the date range, the
+  /// pattern or the distribution. Name, description or points alone do not.
+  bool _planChanged(Quest q) {
+    final old = _old!;
+    String tasks(Quest x) => [for (final t in x.tasks) '${t.id}\u0000${t.name}'].join('\u0001');
+    return tasks(q) != tasks(old) ||
+        q.startDate != old.startDate ||
+        q.endDate != old.endDate ||
+        q.auto != old.auto ||
+        jsonEncode(q.pattern?.toJson()) != jsonEncode(old.pattern?.toJson());
   }
 
   /// A task keeps its date once checked or once that date has passed.

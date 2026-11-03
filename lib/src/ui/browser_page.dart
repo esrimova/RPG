@@ -45,6 +45,21 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
     }
   }
 
+  /// After a branch is created here, show it instead of the Quests page that
+  /// now sits at this index.
+  Future<void> _addBranch() async {
+    final before = ref.read(appProvider).view.branches.length;
+    await showBranchEditor(context);
+    if (!mounted) return;
+    final n = ref.read(appProvider).view.branches.length;
+    if (n <= before) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _pages.hasClients) {
+        _pages.animateToPage(n - 1, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final app = ref.watch(appProvider);
@@ -83,7 +98,7 @@ class _BrowserPageState extends ConsumerState<BrowserPage> {
                     itemBuilder: (_, i) {
                       if (i == questsIndex) return const QuestsPage(key: ValueKey('quests'));
                       if (branches.isEmpty) return const _EmptyStart();
-                      if (i == branches.length + 1) return const _AddBranchPage();
+                      if (i == branches.length + 1) return _AddBranchPage(onAdd: _addBranch);
                       return _BranchPage(key: ValueKey(branches[i].id), branchId: branches[i].id);
                     },
                   ),
@@ -142,13 +157,14 @@ class _EmptyStart extends ConsumerWidget {
 }
 
 class _AddBranchPage extends StatelessWidget {
-  const _AddBranchPage();
+  const _AddBranchPage({required this.onAdd});
+  final VoidCallback onAdd;
   @override
   Widget build(BuildContext context) => Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           const Icon(Icons.add_circle_outline, size: 56, color: Pal.muted),
           const SizedBox(height: 12),
-          OutlinedButton(onPressed: () => showBranchEditor(context), child: const Text('Add another branch')),
+          OutlinedButton(onPressed: onAdd, child: const Text('Add another branch')),
         ]),
       );
 }
@@ -457,6 +473,19 @@ void showHistory(BuildContext context, Activity a) {
   );
 }
 
+/// "`xp` XP · `pct`%" for a record made with a goal, measured against the goal
+/// stored on the record. Records keep no goal field id, so the activity's
+/// current goal field (or its first number/duration field) is used.
+String? _goalShare(Activity a, Record r) {
+  final g = r.goal;
+  if (g == null || g <= 0) return null;
+  bool countable(ActivityField f) => f.type == FieldType.number || f.type == FieldType.duration;
+  final f = a.fields.where((f) => f.id == a.goalFieldId && countable(f)).firstOrNull ?? a.fields.where(countable).firstOrNull;
+  final v = f == null ? null : r.values[f.id];
+  if (v is! num) return null;
+  return '${r.xpEarned} XP · ${(v / g * 100).round()}%';
+}
+
 class _HistorySheet extends ConsumerWidget {
   const _HistorySheet({required this.activityId, required this.scroll});
   final String activityId;
@@ -485,7 +514,10 @@ class _HistorySheet extends ConsumerWidget {
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(a.fields.isEmpty ? 'Done' : a.fields.map((f) => '${f.name}: ${formatValue(f, r.values[f.id])}').join('   ')),
-          subtitle: Text(DateFormat.yMMMd().add_Hm().format(r.timestamp.toLocal())),
+          subtitle: Text([
+            DateFormat.yMMMd().add_Hm().format(r.timestamp.toLocal()),
+            ?_goalShare(a, r),
+          ].join(' · ')),
           trailing: IconButton(
             icon: const Icon(Icons.delete_outline, color: Pal.muted),
             onPressed: () async {
