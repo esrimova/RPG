@@ -34,6 +34,7 @@ class _PushDialog extends ConsumerStatefulWidget {
 class _PushDialogState extends ConsumerState<_PushDialog> {
   PushLogEntry? _result;
   bool _finished = false;
+  String? _error;
 
   @override
   void initState() {
@@ -42,10 +43,17 @@ class _PushDialogState extends ConsumerState<_PushDialog> {
   }
 
   Future<void> _run() async {
-    final entry = await ref.read(appProvider.notifier).pushNow();
+    PushLogEntry? entry;
+    String? error;
+    try {
+      entry = await ref.read(appProvider.notifier).pushNow();
+    } catch (e) {
+      error = 'Push stopped: $e';
+    }
     if (!mounted) return;
     setState(() {
       _result = entry;
+      _error = error;
       _finished = true;
     });
   }
@@ -55,14 +63,16 @@ class _PushDialogState extends ConsumerState<_PushDialog> {
     final app = ref.watch(appProvider);
     final p = app.push;
     if (!_finished) {
-      return AlertDialog(
+      return PopScope(
+          canPop: false,
+          child: AlertDialog(
         title: const Text('Push to GitHub'),
         content: Row(children: [
           const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 3)),
           const SizedBox(width: 16),
           Expanded(child: Text(p.total == 0 ? 'Sending…' : 'Sending ${p.done} of ${p.total}…')),
         ]),
-      );
+      ));
     }
     final r = _result;
     final String summary;
@@ -74,10 +84,12 @@ class _PushDialogState extends ConsumerState<_PushDialog> {
           '${r.failed > 0 ? ', ${r.failed} failed' : ''}'
           ' (of ${r.sent} sent).';
     }
-    return AlertDialog(
+    return PopScope(
+        canPop: true,
+        child: AlertDialog(
       title: const Text('Push finished'),
       content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(summary),
+        Text(_error ?? summary),
         if (app.hasPending)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -90,6 +102,6 @@ class _PushDialogState extends ConsumerState<_PushDialog> {
           ),
       ]),
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
-    );
+    ));
   }
 }

@@ -28,9 +28,12 @@ class _Remote implements RemoteStore {
   Snapshot data = Snapshot.empty;
   final Map<String, OpResult> results = {};
   Completer<void>? gate;
+  bool explode = false;
+  bool rejectAll = false;
   @override
   Future<void> dispatchBatch(List<Operation> ops) async {
     if (gate != null) await gate!.future;
+    if (explode) throw StateError('boom');
     for (final op in ops) {
       final r = applyOperation(data, op);
       if (r.ok) data = r.snapshot;
@@ -192,5 +195,44 @@ void main() {
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
     expect(find.text('Synced'), findsOneWidget);
+  });
+
+  testWidgets('push dialog: back is blocked mid-push; progress shows "of 2"', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2600);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    final (widget, remote) = await connectedApp();
+    remote.gate = Completer<void>();
+    await tester.pumpWidget(widget);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2 pending'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Sending 0 of 2…'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.textContaining('Sending'), findsOneWidget);
+    remote.gate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Push finished'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Push finished'), findsNothing);
+  });
+
+  testWidgets('push dialog: unexpected error still shows a message and OK closes it', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2600);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    final (widget, remote) = await connectedApp();
+    remote.explode = true;
+    await tester.pumpWidget(widget);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2 pending'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Push stopped'), findsOneWidget);
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Push stopped'), findsNothing);
   });
 }
