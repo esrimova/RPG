@@ -1,3 +1,4 @@
+import 'goals.dart';
 import 'models.dart';
 
 /// Applies an operation to a snapshot with the same rules as
@@ -12,6 +13,16 @@ class ApplyResult {
 }
 
 String _norm(String s) => s.trim().toLowerCase();
+
+String? _goalError(Activity a) {
+  if (a.goal == null && a.goalFieldId == null) return null;
+  if (a.goal == null) return 'Goal field needs a goal';
+  if (a.goal! <= 0) return 'Goal must be greater than 0';
+  final f = a.fields.where((f) => f.id == a.goalFieldId).firstOrNull;
+  if (f == null) return 'Goal needs a field to measure';
+  if (f.type == FieldType.text) return 'Goal field must be numeric';
+  return null;
+}
 
 ApplyResult applyOperation(Snapshot s, Operation op) {
   ApplyResult fail(String m) => ApplyResult(s, m);
@@ -55,6 +66,8 @@ ApplyResult applyOperation(Snapshot s, Operation op) {
       if (s.activities.any((o) => o.id != a.id && o.branchId == a.branchId && _norm(o.name) == _norm(a.name))) {
         return fail('Activity "${a.name}" already exists in this branch');
       }
+      final goalError = _goalError(a);
+      if (goalError != null) return fail(goalError);
       final list = [...s.activities];
       if (i >= 0) {
         list[i] = a;
@@ -79,6 +92,15 @@ ApplyResult applyOperation(Snapshot s, Operation op) {
       for (final f in act.fields) {
         final v = r.values[f.id];
         if (f.required && (v == null || v == '')) return fail('Missing value for "${f.name}"');
+      }
+      if (op.action == OpAction.create && act.goal != null) {
+        final gv = r.values[act.goalFieldId];
+        if (gv is! num) return fail('Missing goal value');
+        final effective = r.goal ?? act.goal!;
+        if (effective <= 0) return fail('Goal must be greater than 0');
+        if (r.xpEarned != goalXp(baseXp: act.baseXp, value: gv, goal: effective)) {
+          return fail('Points do not match the goal');
+        }
       }
       final list = [...s.records];
       if (i >= 0) {

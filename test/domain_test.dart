@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_life_rpg/src/domain/apply.dart';
+import 'package:personal_life_rpg/src/domain/goals.dart';
 import 'package:personal_life_rpg/src/domain/models.dart';
 import 'package:personal_life_rpg/src/domain/progress.dart';
 
@@ -56,6 +57,75 @@ void main() {
     test('json round trip keeps fields', () {
       final a = Activity.fromJson(activity().toJson());
       expect(a.fields.single.type, FieldType.number);
+    });
+  });
+
+  group('goals', () {
+    Activity goalAct({double? goal = 10, String? fieldId = 'reps', List<ActivityField>? fields}) => Activity(
+          id: 'a1',
+          branchId: 'b1',
+          name: 'Push-ups',
+          color: 1,
+          iconCodePoint: 2,
+          baseXp: 10,
+          goal: goal,
+          goalFieldId: fieldId,
+          fields: fields ?? const [ActivityField(id: 'reps', name: 'Reps', type: FieldType.number)],
+          createdAt: DateTime(2026, 1, 1),
+        );
+    final base = Snapshot(branches: [branch()]);
+    ApplyResult put(Snapshot s, Activity a) => applyOperation(s, op(OpAction.create, EntityType.activity, a.id, a.toJson()));
+
+    test('goalXp maths', () {
+      expect(goalXp(baseXp: 10, value: 5, goal: 10), 5);
+      expect(goalXp(baseXp: 10, value: 20, goal: 10), 20);
+      expect(goalXp(baseXp: 10, value: 0, goal: 10), 0);
+      expect(goalXp(baseXp: 10, value: 1, goal: 4), 3);
+      expect(() => goalXp(baseXp: 10, value: 1, goal: 0), throwsArgumentError);
+    });
+
+    test('activity goal validation', () {
+      expect(put(base, goalAct(fieldId: null)).ok, isFalse);
+      expect(
+          put(base, goalAct(fieldId: 't', fields: const [ActivityField(id: 't', name: 'Note', type: FieldType.text)])).ok,
+          isFalse);
+      expect(put(base, goalAct(fieldId: 'nope')).ok, isFalse);
+      expect(put(base, goalAct(goal: 0)).ok, isFalse);
+      expect(put(base, goalAct(goal: -3)).ok, isFalse);
+      expect(put(base, goalAct()).ok, isTrue);
+    });
+
+    test('json round trip keeps goal', () {
+      final j = goalAct().toJson();
+      expect(j['goal'], 10.0);
+      expect(j['goal_field_id'], 'reps');
+      final a = Activity.fromJson(j);
+      expect(a.goal, 10.0);
+      expect(a.goalFieldId, 'reps');
+      expect(Activity.fromJson(activity().toJson()).goal, isNull);
+    });
+
+    test('record xp must equal goal points', () {
+      final s = put(base, goalAct()).snapshot;
+      Record r(int xp, {double? goal}) => Record(
+          id: 'r1', activityId: 'a1', branchId: 'b1', timestamp: DateTime(2026, 1, 2), values: {'reps': 5}, xpEarned: xp, goal: goal);
+      ApplyResult rec1(Record x) => applyOperation(s, op(OpAction.create, EntityType.record, 'r1', x.toJson()));
+      expect(rec1(r(10)).ok, isFalse);
+      expect(rec1(r(5)).ok, isTrue);
+      expect(rec1(r(10, goal: 5)).ok, isTrue);
+      expect(Record.fromJson(r(5, goal: 5).toJson()).goal, 5.0);
+    });
+
+    test('existing record unchanged after goal edit', () {
+      var s = put(base, goalAct()).snapshot;
+      final r = Record(
+          id: 'r1', activityId: 'a1', branchId: 'b1', timestamp: DateTime(2026, 1, 2), values: {'reps': 5}, xpEarned: 5, goal: 10);
+      s = applyOperation(s, op(OpAction.create, EntityType.record, 'r1', r.toJson())).snapshot;
+      final edited = goalAct(goal: 20);
+      final res = applyOperation(s, op(OpAction.update, EntityType.activity, 'a1', edited.toJson()));
+      expect(res.ok, isTrue);
+      expect(res.snapshot.records.single.xpEarned, 5);
+      expect(res.snapshot.records.single.goal, 10.0);
     });
   });
 

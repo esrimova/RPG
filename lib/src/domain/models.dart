@@ -102,6 +102,8 @@ class Activity {
   final int iconCodePoint;
   final int baseXp;
   final List<ActivityField> fields;
+  final double? goal;
+  final String? goalFieldId;
   final DateTime createdAt;
 
   const Activity({
@@ -113,10 +115,22 @@ class Activity {
     required this.iconCodePoint,
     this.baseXp = 10,
     this.fields = const [],
+    this.goal,
+    this.goalFieldId,
     required this.createdAt,
   });
 
-  Activity copyWith({String? name, String? description, int? color, int? iconCodePoint, int? baseXp, List<ActivityField>? fields}) =>
+  Activity copyWith({
+    String? name,
+    String? description,
+    int? color,
+    int? iconCodePoint,
+    int? baseXp,
+    List<ActivityField>? fields,
+    double? goal,
+    String? goalFieldId,
+    bool clearGoal = false,
+  }) =>
       Activity(
         id: id,
         branchId: branchId,
@@ -126,6 +140,8 @@ class Activity {
         iconCodePoint: iconCodePoint ?? this.iconCodePoint,
         baseXp: baseXp ?? this.baseXp,
         fields: fields ?? this.fields,
+        goal: clearGoal ? null : (goal ?? this.goal),
+        goalFieldId: clearGoal ? null : (goalFieldId ?? this.goalFieldId),
         createdAt: createdAt,
       );
 
@@ -138,6 +154,8 @@ class Activity {
         'icon_code_point': iconCodePoint,
         'base_xp': baseXp,
         'fields': fields.map((f) => f.toJson()).toList(),
+        if (goal != null) 'goal': goal,
+        if (goalFieldId != null) 'goal_field_id': goalFieldId,
         'created_at': createdAt.toIso8601String(),
       };
 
@@ -152,6 +170,8 @@ class Activity {
         fields: ((j['fields'] as List?) ?? const [])
             .map((f) => ActivityField.fromJson(Map<String, dynamic>.from(f as Map)))
             .toList(),
+        goal: (j['goal'] as num?)?.toDouble(),
+        goalFieldId: j['goal_field_id'] as String?,
         createdAt: DateTime.tryParse(j['created_at'] as String? ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
       );
 }
@@ -164,6 +184,7 @@ class Record {
   final Map<String, dynamic> values;
   final int xpEarned;
   final String? notes;
+  final double? goal;
 
   const Record({
     required this.id,
@@ -173,6 +194,7 @@ class Record {
     required this.values,
     required this.xpEarned,
     this.notes,
+    this.goal,
   });
 
   Map<String, dynamic> toJson() => {
@@ -183,6 +205,7 @@ class Record {
         'field_values': values,
         'xp_earned': xpEarned,
         if (notes != null && notes!.isNotEmpty) 'notes': notes,
+        if (goal != null) 'goal': goal,
       };
 
   factory Record.fromJson(Map<String, dynamic> j) => Record(
@@ -193,6 +216,7 @@ class Record {
         values: Map<String, dynamic>.from((j['field_values'] as Map?) ?? const {}),
         xpEarned: (j['xp_earned'] as num?)?.toInt() ?? 0,
         notes: j['notes'] as String?,
+        goal: (j['goal'] as num?)?.toDouble(),
       );
 }
 
