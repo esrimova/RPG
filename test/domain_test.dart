@@ -158,7 +158,7 @@ void main() {
           'end_date': end,
           'total_xp': xp,
           'distribution': dist,
-          if (pattern != null) 'pattern': pattern,
+          'pattern': ?pattern,
           'tasks': tasks ?? [task('t1', '2026-01-02'), task('t2', '2026-01-03')],
           'created_at': '2026-01-01T00:00:00.000',
         };
