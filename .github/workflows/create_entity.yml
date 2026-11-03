@@ -18,7 +18,7 @@ on:
       entity_type:
         required: true
         type: choice
-        options: [branch, activity, record]
+        options: [branch, activity, record, quest]
       entity_id:
         required: true
         type: string
@@ -27,6 +27,10 @@ on:
         required: false
         type: string
         default: '{}'
+      local_date:
+        description: 'Local calendar date YYYY-MM-DD (needed to update a quest)'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -46,6 +50,9 @@ jobs:
       RPG_ENTITY_TYPE: ${{ github.event.client_payload.entity_type || github.event.inputs.entity_type }}
       RPG_ENTITY_ID: ${{ github.event.client_payload.entity_id || github.event.inputs.entity_id }}
       RPG_PAYLOAD: ${{ github.event.client_payload.payload && toJson(github.event.client_payload.payload) || github.event.inputs.payload }}
+      RPG_LOCAL_DATE: ${{ github.event.client_payload.local_date || github.event.inputs.local_date }}
+      # Batch from the app (up to 25 operations). Passed only through the environment.
+      RPG_OPERATIONS: ${{ github.event.client_payload.operations && toJson(github.event.client_payload.operations) || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,14 +65,25 @@ jobs:
         run: python .github/scripts/audit_entity.py
 
       - name: Commit result
+        env:
+          AUDIT_STATUS: ${{ steps.audit.outputs.status }}
+          AUDIT_SUMMARY: ${{ steps.audit.outputs.summary }}
+          AUDIT_COUNT: ${{ steps.audit.outputs.count }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A branches.json activities.json records.json status
+          # quests.json only exists once a quest has been created
+          for f in branches.json activities.json records.json quests.json status; do
+            if [ -e "$f" ]; then git add -A "$f"; fi
+          done
           if git diff --cached --quiet; then
             echo "Nothing to commit"
           else
-            git commit -m "data: ${RPG_ACTION} ${RPG_ENTITY_TYPE} ${RPG_ENTITY_ID} [${{ steps.audit.outputs.status }}]"
+            if [ -n "${RPG_OPERATIONS}" ]; then
+              git commit -m "data: batch of ${AUDIT_COUNT} operations [${AUDIT_SUMMARY}]"
+            else
+              git commit -m "data: ${RPG_ACTION} ${RPG_ENTITY_TYPE} ${RPG_ENTITY_ID} [${AUDIT_STATUS}]"
+            fi
             for i in 1 2 3; do
               git push && break
               git pull --rebase
