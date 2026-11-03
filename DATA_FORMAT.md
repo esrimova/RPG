@@ -33,7 +33,7 @@ Checking a task, adding or re-dating tasks, or editing the quest is an `update` 
 Derived quest status and points (never stored; computed with the local date of "today", or of the operation):
 - Completed: at least one task and every task checked.
 - Failed: not completed and today is after `end_date`.
-- Active: otherwise (a quest with no tasks stays active, 0 XP).
+- Active: otherwise. A quest with no tasks is active with 0 XP until its end date, then failed.
 - XP: active `floor(total_xp * checked / task_count)`; completed `total_xp`; failed `0` (shares earned along the way are lost).
 - Completed and failed quests are frozen: they accept only `delete`. A quest cannot be completed by removing tasks.
 
