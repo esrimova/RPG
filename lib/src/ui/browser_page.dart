@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../domain/goals.dart';
 import '../domain/models.dart';
 import '../domain/progress.dart';
 import '../state/app_controller.dart';
@@ -230,6 +231,38 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
     super.dispose();
   }
 
+  ActivityField? get _goalField {
+    if (a.goal == null || a.goalFieldId == null) return null;
+    for (final f in a.fields) {
+      if (f.id == a.goalFieldId && (f.type == FieldType.number || f.type == FieldType.duration)) return f;
+    }
+    return null;
+  }
+
+  /// Value typed in the goal field, in stored units (seconds for durations); 0 when empty or invalid.
+  double _goalValue(ActivityField f) {
+    final n = double.tryParse(_ctl(f.id).text.trim().replaceAll(',', '.'));
+    if (n == null || n < 0) return 0;
+    return f.type == FieldType.duration ? (n * 60).roundToDouble() : n;
+  }
+
+  /// Points this record would earn right now.
+  int get _points {
+    final f = _goalField;
+    if (f == null) return a.baseXp;
+    return goalXp(baseXp: a.baseXp, value: _goalValue(f), goal: a.goal!);
+  }
+
+  String? get _preview {
+    final f = _goalField;
+    if (f == null) return null;
+    final v = _goalValue(f);
+    final g = a.goal!;
+    final d = f.type == FieldType.duration ? 60 : 1;
+    final pct = (v / g * 100).round();
+    return '${_n(v / d)} / ${_n(g / d)} = $pct% → +$_points XP';
+  }
+
   Future<void> _record() async {
     final values = <String, dynamic>{};
     for (final f in a.fields) {
@@ -266,8 +299,10 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
       branchId: a.branchId,
       timestamp: DateTime.now(),
       values: values,
-      xpEarned: a.baseXp,
+      xpEarned: _points,
+      goal: _goalField == null ? null : a.goal,
     );
+    final earned = rec.xpEarned;
     final before = ref.read(playerStatsProvider).level.level;
     final r = await c.addRecord(rec);
     if (!mounted) return;
@@ -282,7 +317,7 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
     _bool.clear();
     setState(() {});
     final after = ref.read(playerStatsProvider).level.level;
-    toast(context, after > before ? 'Recorded +${a.baseXp} XP. Level up! You are now level $after.' : 'Recorded +${a.baseXp} XP');
+    toast(context, after > before ? 'Recorded +$earned XP. Level up! You are now level $after.' : 'Recorded +$earned XP');
   }
 
   @override
@@ -325,13 +360,15 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
           const SizedBox(height: 10),
           for (final f in a.fields) _fieldInput(f, last),
           if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_error!, style: const TextStyle(color: Pal.red, fontSize: 13))),
+          if (_preview != null)
+            Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_preview!, style: TextStyle(color: color, fontSize: 13))),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
               style: FilledButton.styleFrom(backgroundColor: color, foregroundColor: Colors.black),
               onPressed: _record,
               icon: const Icon(Icons.check),
-              label: Text('Record  (+${a.baseXp} XP)'),
+              label: Text('Record  (+$_points XP)'),
             ),
           ),
         ]),
@@ -353,7 +390,7 @@ class _ActivityCardState extends ConsumerState<ActivityCard> {
           padding: const EdgeInsets.only(bottom: 10),
           child: TextField(
             controller: _ctl(f.id),
-            onChanged: (_) { if (_error != null) setState(() => _error = null); },
+            onChanged: (_) => setState(() => _error = null),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: InputDecoration(labelText: f.type == FieldType.duration ? '$label - minutes' : label, hintText: hint),
           ),

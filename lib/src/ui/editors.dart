@@ -136,8 +136,34 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
     for (final f in widget.existing?.fields ?? const <ActivityField>[])
       _FieldDraft(id: f.id, name: f.name, type: f.type, unit: f.unit ?? '', required: f.required),
   ];
+  late final _goal = TextEditingController(text: _initialGoalText());
+  late String? _goalFieldId = widget.existing?.goalFieldId;
   bool _busy = false;
   String? _error;
+
+  /// Duration goals are shown in minutes (stored in seconds, like the field value).
+  String _initialGoalText() {
+    final a = widget.existing;
+    final g = a?.goal;
+    if (a == null || g == null) return '';
+    final isDuration = a.fields.any((f) => f.id == a.goalFieldId && f.type == FieldType.duration);
+    return _num(isDuration ? g / 60 : g);
+  }
+
+  static String _num(num v) => v == v.roundToDouble() ? v.round().toString() : v.toString();
+
+  bool _countable(_FieldDraft f) => f.type == FieldType.number || f.type == FieldType.duration;
+
+  bool get _hasGoal => _goal.text.trim().isNotEmpty;
+
+  List<_FieldDraft> get _candidates => _fields.where(_countable).toList();
+
+  /// The field the goal is counted on: the chosen one, else the first number/duration field.
+  _FieldDraft? get _goalField {
+    final c = _candidates;
+    if (c.isEmpty) return null;
+    return c.firstWhere((f) => f.id == _goalFieldId, orElse: () => c.first);
+  }
 
   @override
   void initState() {
@@ -159,6 +185,15 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
     final names = _fields.map((f) => f.name.text.trim().toLowerCase()).toList();
     if (names.toSet().length != names.length) return setState(() => _error = 'Two fields have the same name.');
 
+    final gf = _goalField;
+    double? goal;
+    if (_hasGoal) {
+      if (gf == null) return setState(() => _error = 'A goal needs a number or duration field to count. Add one or clear the goal.');
+      final g = double.tryParse(_goal.text.trim().replaceAll(',', '.'));
+      if (g == null || g <= 0) return setState(() => _error = 'The goal must be a number greater than 0.');
+      goal = gf.type == FieldType.duration ? g * 60 : g;
+    }
+
     setState(() {
       _busy = true;
       _error = null;
@@ -166,12 +201,17 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
     final c = ref.read(appProvider.notifier);
     final fields = [
       for (final f in _fields)
-        ActivityField(id: f.id, name: f.name.text.trim(), type: f.type, unit: f.unit.text.trim().isEmpty ? null : f.unit.text.trim(), required: f.required),
+        ActivityField(
+            id: f.id,
+            name: f.name.text.trim(),
+            type: f.type,
+            unit: f.unit.text.trim().isEmpty ? null : f.unit.text.trim(),
+            required: f.required || (goal != null && f.id == gf?.id)),
     ];
     final isNew = widget.existing == null;
     final a = (widget.existing ??
             Activity(id: c.newId('ac'), branchId: widget.branchId, name: name, color: _color, iconCodePoint: _icon, createdAt: DateTime.now()))
-        .copyWith(name: name, description: _desc.text.trim(), color: _color, iconCodePoint: _icon, baseXp: xp, fields: fields);
+        .copyWith(name: name, description: _desc.text.trim(), color: _color, iconCodePoint: _icon, baseXp: xp, fields: fields, goal: goal, goalFieldId: goal == null ? null : gf!.id, clearGoal: goal == null);
     final r = await c.saveActivity(a, isNew: isNew);
     if (!mounted) return;
     if (_handleResult(context, r, 'Activity')) {
@@ -198,6 +238,39 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
             controller: _xp,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'XP earned per record', helperText: 'Each time you record this activity you earn this much XP.')),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _goal,
+          onChanged: (_) => setState(() => _goalFieldId ??= _goalField?.id),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: 'Goal',
+            helperText: _goalField?.type == FieldType.duration
+                ? 'Optional. In minutes. Reaching it earns the full XP; more or less scales it.'
+                : 'Optional. Reaching it earns the full XP; more or less scales it.',
+          ),
+        ),
+        if (_hasGoal && _candidates.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: DropdownButtonFormField<String>(
+              key: ValueKey('goalfield-${_goalField?.id}-${_candidates.length}'),
+              initialValue: _goalField?.id,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Goal field'),
+              items: [
+                for (final f in _candidates)
+                  DropdownMenuItem(value: f.id, child: Text(f.name.text.trim().isEmpty ? 'Unnamed field' : f.name.text.trim(), overflow: TextOverflow.ellipsis)),
+              ],
+              onChanged: (v) => setState(() => _goalFieldId = v),
+            ),
+          )
+        else if (_hasGoal && _candidates.length == 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('Counted on: ${_goalField!.name.text.trim().isEmpty ? 'your field' : _goalField!.name.text.trim()}',
+                style: const TextStyle(color: Pal.muted, fontSize: 12)),
+          ),
         const SizedBox(height: 16),
         const Text('Color', style: TextStyle(color: Pal.muted, fontSize: 12)),
         const SizedBox(height: 8),
@@ -229,7 +302,9 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
     );
   }
 
-  Widget _fieldCard(_FieldDraft f) => Padding(
+  Widget _fieldCard(_FieldDraft f) {
+    final locked = _hasGoal && _goalField?.id == f.id; // the goal needs this field
+    return Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Card(
           child: Padding(
@@ -237,7 +312,10 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
             child: Column(children: [
               Row(children: [
                 Expanded(child: TextField(controller: f.name, decoration: const InputDecoration(labelText: 'Field name', hintText: 'e.g. Reps'))),
-                IconButton(onPressed: () => setState(() => _fields.remove(f)), icon: const Icon(Icons.delete_outline, color: Pal.red)),
+                IconButton(
+                  tooltip: locked ? 'Clear the goal to delete this field' : null,
+                  onPressed: locked ? null : () => setState(() => _fields.remove(f)),
+                  icon: Icon(Icons.delete_outline, color: locked ? Pal.muted : Pal.red)),
               ]),
               const SizedBox(height: 10),
               DropdownButtonFormField<FieldType>(
@@ -245,10 +323,10 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
                 isExpanded: true,
                 decoration: InputDecoration(
                   labelText: 'Type',
-                  helperText: f.type == FieldType.duration ? 'You enter minutes when recording.' : null,
+                  helperText: locked ? 'Used by the goal' : (f.type == FieldType.duration ? 'You enter minutes when recording.' : null),
                 ),
                 items: [for (final t in FieldType.values) DropdownMenuItem(value: t, child: Text(t.label, overflow: TextOverflow.ellipsis))],
-                onChanged: (v) => setState(() => f.type = v ?? f.type),
+                onChanged: locked ? null : (v) => setState(() => f.type = v ?? f.type),
               ),
               const SizedBox(height: 10),
               TextField(controller: f.unit, decoration: const InputDecoration(labelText: 'Unit (optional)', hintText: 'e.g. kg, km, reps')),
@@ -256,11 +334,12 @@ class _ActivityEditorPageState extends ConsumerState<ActivityEditorPage> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 title: const Text('Required'),
-                value: f.required,
-                onChanged: (v) => setState(() => f.required = v),
+                value: f.required || locked,
+                onChanged: locked ? null : (v) => setState(() => f.required = v),
               ),
             ]),
           ),
         ),
-      );
+    );
+  }
 }
