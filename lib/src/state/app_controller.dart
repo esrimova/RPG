@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/local_store.dart';
 import '../data/remote_store.dart';
@@ -287,7 +288,7 @@ class AppController extends StateNotifier<AppState> {
         if (reasons.length > 1) '${reasons.length} changes were not saved: ${reasons.toSet().take(3).join('; ')}',
         ?stopNotice,
       ].join(' ');
-      state = state.copyWith(pushLog: log, notice: notice.isEmpty ? null : notice);
+      state = state.copyWith(pushLog: log, notice: notice.isEmpty ? null : notice, clearNotice: notice.isEmpty);
       return entry;
     } finally {
       _pushing = false;
@@ -399,7 +400,9 @@ class AppController extends StateNotifier<AppState> {
   }
 
   /// Saves the connection and merges whatever exists locally with the
-  /// repository: nothing is lost, missing items are queued for the next push.
+  /// repository: items missing remotely are queued as creates and items whose
+  /// local copy differs are queued as updates, for the next push. Deletes are
+  /// not inferred (a local delete of a remote item is not recoverable here).
   Future<ConnectionReport> connect(GithubConfig cfg) async {
     final report = await testConnection(cfg);
     if (!report.ok) return report;
@@ -409,23 +412,33 @@ class AppController extends StateNotifier<AppState> {
       final remote = await _remote.pull();
       if (!identical(state.github, cfg)) return report; // disconnected meanwhile
       final local = state.view;
-      final ids = {
-        for (final b in remote.branches) b.id,
-        for (final a in remote.activities) a.id,
-        for (final r in remote.records) r.id,
-        for (final q in remote.quests) q.id,
-      };
-      final ops = <Operation>[
-        ...state.ops,
-        for (final b in local.branches.where((b) => !ids.contains(b.id)))
-          _op(OpAction.create, EntityType.branch, b.id, b.toJson()),
-        for (final a in local.activities.where((a) => !ids.contains(a.id)))
-          _op(OpAction.create, EntityType.activity, a.id, a.toJson()),
-        for (final r in local.records.where((r) => !ids.contains(r.id)))
-          _op(OpAction.create, EntityType.record, r.id, r.toJson()),
-        for (final q in local.quests.where((q) => !ids.contains(q.id)))
-          _op(OpAction.create, EntityType.quest, q.id, q.toJson()),
-      ];
+      // What the repository will hold once the operations already queued apply.
+      var merged = applyAll(remote, state.ops);
+      final added = <Operation>[];
+      void reconcile<T>(EntityType t, List<T> mine, List<T> Function(Snapshot) theirs, String Function(T) id,
+          Map<String, dynamic> Function(T) json) {
+        for (final item in mine) {
+          final there = theirs(merged).where((o) => id(o) == id(item)).firstOrNull;
+          if (there == null) {
+            final op = _op(OpAction.create, t, id(item), json(item));
+            added.add(op);
+            merged = applyAll(merged, [op]);
+          } else if (jsonEncode(json(there)) != jsonEncode(json(item))) {
+            final op = _op(OpAction.update, t, id(item), json(item));
+            final r = applyOperation(merged, op);
+            if (!r.ok) continue; // would be rejected anyway (e.g. a finished quest)
+            added.add(op);
+            merged = r.snapshot;
+          }
+        }
+      }
+
+      reconcile<Branch>(EntityType.branch, local.branches, (s) => s.branches, (b) => b.id, (b) => b.toJson());
+      reconcile<Activity>(
+          EntityType.activity, local.activities, (s) => s.activities, (a) => a.id, (a) => a.toJson());
+      reconcile<Record>(EntityType.record, local.records, (s) => s.records, (r) => r.id, (r) => r.toJson());
+      reconcile<Quest>(EntityType.quest, local.quests, (s) => s.quests, (q) => q.id, (q) => q.toJson());
+      final ops = [...state.ops, ...added];
       state = state.copyWith(base: remote, ops: ops);
       await _local.saveBase(remote);
       if (identical(state.github, cfg)) await _local.saveOps(state.ops);

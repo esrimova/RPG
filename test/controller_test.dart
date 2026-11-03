@@ -496,6 +496,54 @@ void main() {
     expect(c.state.ops, isEmpty);
   });
 
+  test('connect queues an update for a local-only edit of an item that exists remotely', () async {
+    final s = Snapshot(branches: [branch()], activities: [activity()]);
+    final (c, remote) = await setup(connected: false, base: s, remote: FakeRemote()..data = s);
+    await c.saveActivity(activity().copyWith(name: 'Sprint'), isNew: false);
+    await c.connect(const GithubConfig(repo: 'o/r', pat: 't'));
+    expect(remote.batches, isEmpty);
+    expect(c.state.ops.map((o) => '${o.action.name} ${o.type.name} ${o.entityId}'), ['update activity a1']);
+    expect(c.state.view.activities.single.name, 'Sprint');
+    await c.pushNow();
+    expect(remote.data.activities.single.name, 'Sprint');
+  });
+
+  test('disconnect then reconnect keeps a pending update instead of losing it', () async {
+    final s = Snapshot(branches: [branch()], activities: [activity()]);
+    final (c, remote) = await setup(base: s, remote: FakeRemote()..data = s);
+    await c.saveActivity(activity().copyWith(name: 'Sprint'), isNew: false);
+    await c.disconnect();
+    await c.connect(const GithubConfig(repo: 'o/r', pat: 't'));
+    expect(remote.batches, isEmpty);
+    expect(c.state.ops.map((o) => '${o.action.name} ${o.entityId}'), ['update a1']);
+    expect(c.state.view.activities.single.name, 'Sprint');
+  });
+
+  test('connect does not queue creates for items already created by pending operations', () async {
+    final (c, _) = await setup(ops: [rawOp('op1', OpAction.create, EntityType.branch, 'b1', branch().toJson())]);
+    await c.connect(const GithubConfig(repo: 'o/r2', pat: 't'));
+    expect(c.state.ops.map((o) => o.id), ['op1']);
+  });
+
+  test('connect with identical local and remote data queues nothing', () async {
+    final s = Snapshot(branches: [branch()], activities: [activity()]);
+    final (c, _) = await setup(connected: false, base: s, remote: FakeRemote()..data = s);
+    await c.connect(const GithubConfig(repo: 'o/r', pat: 't'));
+    expect(c.state.ops, isEmpty);
+  });
+
+  test('a fully successful push clears an old error notice', () async {
+    final (c, remote) = await setup();
+    await c.saveBranch(branch(), isNew: true);
+    remote.offline = true;
+    await c.pushNow();
+    expect(c.state.notice, contains('No connection'));
+    remote.offline = false;
+    await c.pushNow();
+    expect(c.state.ops, isEmpty);
+    expect(c.state.notice, isNull);
+  });
+
   test('disconnect keeps the view and sends nothing', () async {
     final (c, remote) = await setup();
     await c.saveBranch(branch(), isNew: true);

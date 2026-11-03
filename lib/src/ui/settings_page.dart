@@ -205,7 +205,7 @@ class _GithubSectionState extends ConsumerState<_GithubSection> {
             if (_busy) const LinearProgressIndicator(),
             Wrap(spacing: 8, runSpacing: 4, children: [
               OutlinedButton(onPressed: _busy ? null : _test, child: const Text('Test connection')),
-              FilledButton(onPressed: _busy ? null : _connect, child: Text(connected ? 'Update & sync' : 'Connect')),
+              FilledButton(onPressed: _busy ? null : _connect, child: Text(connected ? 'Update' : 'Connect')),
               if (connected)
                 FilledButton.icon(
                   onPressed: app.syncing || !app.hasPending ? null : () => showPushDialog(context, ref),
@@ -219,7 +219,12 @@ class _GithubSectionState extends ConsumerState<_GithubSection> {
               if (connected)
                 TextButton(
                   onPressed: () async {
-                    if (await confirm(context, 'Disconnect GitHub?', 'Data stays on this phone but will no longer sync.', action: 'Disconnect')) {
+                    final n = ref.read(appProvider).pendingCount;
+                    final text = n > 0
+                        ? 'Data stays on this phone but will no longer sync.\n\n'
+                            '$n change(s) are not pushed to GitHub and could be lost if you reconnect - push first.'
+                        : 'Data stays on this phone but will no longer sync.';
+                    if (await confirm(context, 'Disconnect GitHub?', text, action: 'Disconnect')) {
                       await ref.read(appProvider.notifier).disconnect();
                       if (mounted) setState(() => _report = null);
                     }
