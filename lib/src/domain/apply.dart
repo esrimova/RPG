@@ -35,7 +35,7 @@ ApplyResult applyOperation(Snapshot s, Operation op) {
       if (op.action != OpAction.create && i < 0) return fail('Branch does not exist');
       if (op.action == OpAction.delete) {
         final gone = s.activities.where((a) => a.branchId == op.entityId).map((a) => a.id).toSet();
-        return ApplyResult(Snapshot(
+        return ApplyResult(s.copyWith(
           branches: s.branches.where((b) => b.id != op.entityId).toList(),
           activities: s.activities.where((a) => a.branchId != op.entityId).toList(),
           records: s.records.where((r) => r.branchId != op.entityId && !gone.contains(r.activityId)).toList(),
@@ -51,14 +51,13 @@ ApplyResult applyOperation(Snapshot s, Operation op) {
       } else {
         list.add(b);
       }
-      return ApplyResult(Snapshot(branches: list, activities: s.activities, records: s.records));
+      return ApplyResult(s.copyWith(branches: list));
     case EntityType.activity:
       final i = s.activities.indexWhere((a) => a.id == op.entityId);
       if (op.action == OpAction.create && i >= 0) return fail('Activity already exists');
       if (op.action != OpAction.create && i < 0) return fail('Activity does not exist');
       if (op.action == OpAction.delete) {
-        return ApplyResult(Snapshot(
-          branches: s.branches,
+        return ApplyResult(s.copyWith(
           activities: s.activities.where((a) => a.id != op.entityId).toList(),
           records: s.records.where((r) => r.activityId != op.entityId).toList(),
         ));
@@ -76,15 +75,13 @@ ApplyResult applyOperation(Snapshot s, Operation op) {
       } else {
         list.add(a);
       }
-      return ApplyResult(Snapshot(branches: s.branches, activities: list, records: s.records));
+      return ApplyResult(s.copyWith(activities: list));
     case EntityType.record:
       final i = s.records.indexWhere((r) => r.id == op.entityId);
       if (op.action == OpAction.create && i >= 0) return fail('Record already exists');
       if (op.action != OpAction.create && i < 0) return fail('Record does not exist');
       if (op.action == OpAction.delete) {
-        return ApplyResult(Snapshot(
-          branches: s.branches,
-          activities: s.activities,
+        return ApplyResult(s.copyWith(
           records: s.records.where((r) => r.id != op.entityId).toList(),
         ));
       }
@@ -110,7 +107,9 @@ ApplyResult applyOperation(Snapshot s, Operation op) {
       } else {
         list.add(r);
       }
-      return ApplyResult(Snapshot(branches: s.branches, activities: s.activities, records: list));
+      return ApplyResult(s.copyWith(records: list));
+    case EntityType.quest:
+      return fail('Quest operations are not supported yet'); // implemented in a later task
   }
 }
 

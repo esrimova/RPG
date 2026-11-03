@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'quests.dart' show dateKey;
+
 /// Field types a user can attach to an activity.
 enum FieldType {
   number('number', 'Number'),
@@ -220,15 +222,168 @@ class Record {
       );
 }
 
+class QuestTask {
+  final String id;
+  final String name;
+  final String date;
+  final DateTime? doneAt;
+
+  const QuestTask({required this.id, required this.name, required this.date, this.doneAt});
+
+  QuestTask copyWith({String? name, String? date, DateTime? doneAt, bool clearDone = false}) => QuestTask(
+        id: id,
+        name: name ?? this.name,
+        date: date ?? this.date,
+        doneAt: clearDone ? null : (doneAt ?? this.doneAt),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'date': date,
+        if (doneAt != null) 'done_at': doneAt!.toIso8601String(),
+      };
+
+  factory QuestTask.fromJson(Map<String, dynamic> j) {
+    final done = j['done_at'];
+    return QuestTask(
+      id: j['id'] as String,
+      name: j['name'] as String,
+      date: j['date'] as String,
+      doneAt: done == null ? null : DateTime.parse(done as String),
+    );
+  }
+}
+
+/// How an auto quest spreads its tasks over the date range.
+class QuestPattern {
+  final String type; // every_n_days | weekdays
+  final int n;
+  final List<int> days; // 1=Mon..7=Sun
+
+  const QuestPattern._(this.type, this.n, this.days);
+
+  factory QuestPattern.everyNDays(int n) => QuestPattern._('every_n_days', n, const []);
+  factory QuestPattern.weekdays(List<int> days) => QuestPattern._('weekdays', 0, List.unmodifiable(days));
+
+  Map<String, dynamic> toJson() => type == 'weekdays' ? {'type': type, 'days': days} : {'type': type, 'n': n};
+
+  factory QuestPattern.fromJson(Map<String, dynamic> j) {
+    final type = j['type'] as String;
+    if (type == 'every_n_days') return QuestPattern.everyNDays((j['n'] as num).toInt());
+    if (type == 'weekdays') {
+      return QuestPattern.weekdays((j['days'] as List).map((e) => (e as num).toInt()).toList());
+    }
+    throw FormatException('Unknown quest pattern $type');
+  }
+}
+
+class Quest {
+  final String id;
+  final String name;
+  final String description;
+  final String startDate;
+  final String endDate;
+  final int totalXp;
+  final bool auto;
+  final QuestPattern? pattern;
+  final List<QuestTask> tasks;
+  final DateTime createdAt;
+
+  const Quest({
+    required this.id,
+    required this.name,
+    this.description = '',
+    required this.startDate,
+    required this.endDate,
+    required this.totalXp,
+    this.auto = false,
+    this.pattern,
+    this.tasks = const [],
+    required this.createdAt,
+  });
+
+  Quest copyWith({
+    String? name,
+    String? description,
+    String? startDate,
+    String? endDate,
+    int? totalXp,
+    bool? auto,
+    QuestPattern? pattern,
+    bool clearPattern = false,
+    List<QuestTask>? tasks,
+  }) =>
+      Quest(
+        id: id,
+        name: name ?? this.name,
+        description: description ?? this.description,
+        startDate: startDate ?? this.startDate,
+        endDate: endDate ?? this.endDate,
+        totalXp: totalXp ?? this.totalXp,
+        auto: auto ?? this.auto,
+        pattern: clearPattern ? null : (pattern ?? this.pattern),
+        tasks: tasks ?? this.tasks,
+        createdAt: createdAt,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'start_date': startDate,
+        'end_date': endDate,
+        'total_xp': totalXp,
+        'distribution': auto ? 'auto' : 'manual',
+        if (pattern != null) 'pattern': pattern!.toJson(),
+        'tasks': tasks.map((t) => t.toJson()).toList(),
+        'created_at': createdAt.toIso8601String(),
+      };
+
+  factory Quest.fromJson(Map<String, dynamic> j) => Quest(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        description: j['description'] as String? ?? '',
+        startDate: j['start_date'] as String,
+        endDate: j['end_date'] as String,
+        totalXp: (j['total_xp'] as num).toInt(),
+        auto: j['distribution'] == 'auto',
+        pattern: j['pattern'] == null ? null : QuestPattern.fromJson(Map<String, dynamic>.from(j['pattern'] as Map)),
+        tasks: ((j['tasks'] as List?) ?? const [])
+            .map((t) => QuestTask.fromJson(Map<String, dynamic>.from(t as Map)))
+            .toList(),
+        createdAt: DateTime.tryParse(j['created_at'] as String? ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+      );
+}
+
 /// Everything the app knows about the user's world.
 class Snapshot {
   final List<Branch> branches;
   final List<Activity> activities;
   final List<Record> records;
+  final List<Quest> quests;
 
-  const Snapshot({this.branches = const [], this.activities = const [], this.records = const []});
+  const Snapshot({
+    this.branches = const [],
+    this.activities = const [],
+    this.records = const [],
+    this.quests = const [],
+  });
 
   static const empty = Snapshot();
+
+  Snapshot copyWith({
+    List<Branch>? branches,
+    List<Activity>? activities,
+    List<Record>? records,
+    List<Quest>? quests,
+  }) =>
+      Snapshot(
+        branches: branches ?? this.branches,
+        activities: activities ?? this.activities,
+        records: records ?? this.records,
+        quests: quests ?? this.quests,
+      );
 
   List<Activity> activitiesOf(String branchId) => activities.where((a) => a.branchId == branchId).toList();
   List<Record> recordsOfActivity(String activityId) =>
@@ -238,6 +393,7 @@ class Snapshot {
         'branches': branches.map((e) => e.toJson()).toList(),
         'activities': activities.map((e) => e.toJson()).toList(),
         'records': records.map((e) => e.toJson()).toList(),
+        'quests': quests.map((e) => e.toJson()).toList(),
       };
 
   static List<T> _list<T>(Object? raw, T Function(Map<String, dynamic>) f) {
@@ -256,18 +412,20 @@ class Snapshot {
         branches: _list(j['branches'], Branch.fromJson),
         activities: _list(j['activities'], Activity.fromJson),
         records: _list(j['records'], Record.fromJson),
+        quests: _list(j['quests'], Quest.fromJson),
       );
 
-  factory Snapshot.fromLists(Object? branches, Object? activities, Object? records) => Snapshot(
+  factory Snapshot.fromLists(Object? branches, Object? activities, Object? records, [Object? quests]) => Snapshot(
         branches: _list(branches, Branch.fromJson),
         activities: _list(activities, Activity.fromJson),
         records: _list(records, Record.fromJson),
+        quests: _list(quests, Quest.fromJson),
       );
 }
 
 enum OpAction { create, update, delete }
 
-enum EntityType { branch, activity, record }
+enum EntityType { branch, activity, record, quest }
 
 /// One pending change that must reach the GitHub repository.
 class Operation {
@@ -279,7 +437,11 @@ class Operation {
   final DateTime createdAt;
   final bool dispatched;
 
-  const Operation({
+  /// The user's local calendar date when the operation was made (`YYYY-MM-DD`).
+  /// The validator uses this, never the runner clock.
+  final String localDate;
+
+  Operation({
     required this.id,
     required this.action,
     required this.type,
@@ -287,10 +449,18 @@ class Operation {
     required this.payload,
     required this.createdAt,
     this.dispatched = false,
-  });
+    String? localDate,
+  }) : localDate = localDate ?? dateKey(DateTime.now());
 
   Operation markDispatched() => Operation(
-      id: id, action: action, type: type, entityId: entityId, payload: payload, createdAt: createdAt, dispatched: true);
+      id: id,
+      action: action,
+      type: type,
+      entityId: entityId,
+      payload: payload,
+      createdAt: createdAt,
+      dispatched: true,
+      localDate: localDate);
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -300,6 +470,7 @@ class Operation {
         'payload': payload,
         'created_at': createdAt.toIso8601String(),
         'dispatched': dispatched,
+        'local_date': localDate,
       };
 
   factory Operation.fromJson(Map<String, dynamic> j) => Operation(
@@ -310,6 +481,7 @@ class Operation {
         payload: Map<String, dynamic>.from(j['payload'] as Map? ?? const {}),
         createdAt: DateTime.parse(j['created_at'] as String),
         dispatched: j['dispatched'] as bool? ?? false,
+        localDate: j['local_date'] as String?,
       );
 
   static String encodeList(List<Operation> ops) => jsonEncode(ops.map((o) => o.toJson()).toList());
