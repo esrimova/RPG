@@ -153,4 +153,86 @@ void main() {
       expect(s.quests.length, 1);
     });
   });
+
+  group('task distribution', () {
+    QuestTask t(int i, String date, {bool done = false}) =>
+        QuestTask(id: 't$i', name: 'T$i', date: date, doneAt: done ? DateTime(2026, 11, 2) : null);
+    Quest auto(List<QuestTask> tasks, {QuestPattern? p, String start = '2026-11-10', String end = '2026-12-20'}) => Quest(
+        id: 'q', name: 'Q', startDate: start, endDate: end, totalXp: 100, auto: true,
+        pattern: p ?? QuestPattern.everyNDays(1), tasks: tasks, createdAt: DateTime(2026, 11, 1));
+
+    test('weekdays Mon/Fri over 20 tasks', () {
+      final d = spreadDates(from: '2026-11-10', end: '2026-12-20', pattern: QuestPattern.weekdays([1, 5]), anchor: '2026-11-10', count: 20);
+      expect(d.length, 20);
+      for (final s in d) {
+        expect([1, 5], contains(DateTime.parse(s).weekday));
+        expect(s.compareTo('2026-11-10') >= 0 && s.compareTo('2026-12-20') <= 0, isTrue);
+      }
+      for (var i = 1; i < d.length; i++) {
+        expect(d[i].compareTo(d[i - 1]) >= 0, isTrue);
+      }
+    });
+
+    test('every 2 days starts on from and steps 2', () {
+      final d = spreadDates(from: '2026-11-10', end: '2026-12-20', pattern: QuestPattern.everyNDays(2), anchor: '2026-11-10', count: 20);
+      expect(d.first, '2026-11-10');
+      for (var i = 1; i < d.length; i++) {
+        expect(DateTime.parse(d[i]).difference(DateTime.parse(d[i - 1])).inDays, 2);
+      }
+    });
+
+    test('every N days is anchored at start_date, not from', () {
+      final d = spreadDates(from: '2026-11-11', end: '2026-11-20', pattern: QuestPattern.everyNDays(3), anchor: '2026-11-10', count: 3);
+      expect(d, ['2026-11-13', '2026-11-16', '2026-11-19']);
+    });
+
+    test('more tasks than dates repeats in order', () {
+      final d = spreadDates(from: '2026-11-10', end: '2026-11-12', pattern: QuestPattern.everyNDays(1), anchor: '2026-11-10', count: 6);
+      expect(d, ['2026-11-10', '2026-11-10', '2026-11-11', '2026-11-11', '2026-11-12', '2026-11-12']);
+    });
+
+    test('no eligible dates returns empty', () {
+      expect(spreadDates(from: '2026-11-10', end: '2026-11-10', pattern: QuestPattern.weekdays([3]), anchor: '2026-11-10', count: 2), isEmpty);
+      expect(spreadDates(from: '2026-11-12', end: '2026-11-10', pattern: QuestPattern.everyNDays(1), anchor: '2026-11-10', count: 2), isEmpty);
+    });
+
+    test('respread keeps past/checked tasks and moves open ones to today or later', () {
+      final tasks = [
+        for (var i = 0; i < 10; i++)
+          t(i, dateKey(DateTime(2026, 11, 10).add(Duration(days: i * 5))), done: i < 5)
+      ];
+      final q = auto(tasks);
+      final r = respreadTasks(q, '2026-12-01');
+      for (var i = 0; i < 5; i++) {
+        expect(r.tasks[i].date, q.tasks[i].date);
+      }
+      for (var i = 5; i < 10; i++) {
+        expect(r.tasks[i].date.compareTo('2026-12-01') >= 0, isTrue);
+      }
+    });
+
+    test('today counts as open, checked future task bounds earlier open ones', () {
+      final q = auto([t(0, '2026-11-12'), t(1, '2026-11-13'), t(2, '2026-11-14', done: true), t(3, '2026-11-15'), t(4, '2026-11-16')]);
+      final r = respreadTasks(q, '2026-11-12');
+      expect(r.tasks[2].date, '2026-11-14');
+      expect(r.tasks[2].doneAt, isNotNull);
+      expect(r.tasks[0].date.compareTo('2026-11-14') <= 0, isTrue);
+      expect(r.tasks[1].date.compareTo('2026-11-14') <= 0, isTrue);
+      expect(r.tasks[3].date.compareTo('2026-11-14') >= 0, isTrue);
+      expect(r.tasks[0].date.compareTo('2026-11-12') >= 0, isTrue);
+      expect(r.tasks[4].date.compareTo(r.tasks[3].date) >= 0, isTrue);
+    });
+
+    test('manual quest is returned identical', () {
+      final q = auto([t(0, '2026-11-12')]).copyWith(auto: false);
+      expect(identical(respreadTasks(q, '2026-11-12'), q), isTrue);
+    });
+
+    test('open run with no eligible dates throws', () {
+      final q = auto([t(0, '2026-11-12'), t(1, '2026-11-13', done: true), t(2, '2026-11-13')], p: QuestPattern.weekdays([1]));
+      expect(() => respreadTasks(q, '2026-11-12'), throwsA(isA<StateError>()));
+      final q2 = auto([t(0, '2026-12-19')], p: QuestPattern.weekdays([1]));
+      expect(() => respreadTasks(q2, '2026-12-19'), throwsA(isA<StateError>()));
+    });
+  });
 }
