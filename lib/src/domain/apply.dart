@@ -20,7 +20,9 @@ String? _goalError(Activity a) {
   if (a.goal! <= 0) return 'Goal must be greater than 0';
   final f = a.fields.where((f) => f.id == a.goalFieldId).firstOrNull;
   if (f == null) return 'Goal needs a field to measure';
-  if (f.type == FieldType.text) return 'Goal field must be numeric';
+  if (f.type != FieldType.number && f.type != FieldType.duration) {
+    return 'Goal field must be a number or duration field';
+  }
   return null;
 }
 

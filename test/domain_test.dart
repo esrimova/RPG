@@ -89,6 +89,14 @@ void main() {
       expect(
           put(base, goalAct(fieldId: 't', fields: const [ActivityField(id: 't', name: 'Note', type: FieldType.text)])).ok,
           isFalse);
+      for (final t in [FieldType.yesNo, FieldType.scale]) {
+        final r = put(base, goalAct(fieldId: 'x', fields: [ActivityField(id: 'x', name: 'X', type: t)]));
+        expect(r.ok, isFalse);
+        expect(r.error, contains('number or duration'));
+      }
+      expect(
+          put(base, goalAct(fieldId: 'd', fields: const [ActivityField(id: 'd', name: 'D', type: FieldType.duration)])).ok,
+          isTrue);
       expect(put(base, goalAct(fieldId: 'nope')).ok, isFalse);
       expect(put(base, goalAct(goal: 0)).ok, isFalse);
       expect(put(base, goalAct(goal: -3)).ok, isFalse);
