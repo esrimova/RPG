@@ -17,10 +17,10 @@ const statDefs = <StatDef>[
   StatDef('wat', 'WAT', 'Water', unit: '%', max: 100),
   StatDef('msl', 'MSL', 'Muscle', unit: '%', max: 100),
   StatDef('bon', 'BON', 'Bone mass', unit: 'Kg'),
-  StatDef('calo', 'CALO', 'Calories'),
+  StatDef('calo', 'CALO', 'Calories', unit: 'kcal'),
   StatDef('pxfat', 'PXFAT', 'Visceral fat', unit: '%', max: 100),
   StatDef('protein', 'Protein', 'Protein', unit: '%', max: 100),
-  StatDef('bmi', 'BMI', 'Body mass index'),
+  StatDef('bmi', 'BMI', 'Body mass index', unit: 'kg/m²'),
 ];
 
 StatDef? statDef(String key) => statDefs.where((d) => d.key == key).firstOrNull;

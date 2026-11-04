@@ -49,10 +49,10 @@ Derived quest status and points (never stored; computed with the local date of "
 | `wat` | WAT | % (max 100) |
 | `msl` | MSL | % (max 100) |
 | `bon` | BON | Kg |
-| `calo` | CALO | - |
+| `calo` | CALO | kcal |
 | `pxfat` | PXFAT | % (max 100) |
 | `protein` | Protein | % (max 100) |
-| `bmi` | BMI | - |
+| `bmi` | BMI | kg/m² |
 
 Entries can only be created or deleted (a wrong one is deleted and entered again). They give no XP.
 

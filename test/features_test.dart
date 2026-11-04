@@ -70,6 +70,8 @@ void main() {
       expect(statDef('weight')!.unit, 'Kg');
       expect(statDef('bon')!.unit, 'Kg');
       expect(statDef('fat')!.unit, '%');
+      expect(statDef('calo')!.unit, 'kcal');
+      expect(statDef('bmi')!.unit, 'kg/m²');
     });
 
     test('validation mirrors the server', () {
