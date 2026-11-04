@@ -1,39 +1,43 @@
 [
   {
     "accent_color": 4278248949,
-    "base_xp": 15,
-    "branch_id": "br_hnskeukkhu0",
-    "created_at": "2026-11-02T15:08:28.345365",
+    "base_xp": 10,
+    "branch_id": "br_hnu3sjq0cx3",
+    "created_at": "2026-11-03T22:47:43.228305",
     "description": "",
     "fields": [
       {
-        "id": "fhnsnh0erg9",
+        "id": "fhnu3tto15h",
         "name": "Reps",
         "required": true,
         "type": "number"
       }
     ],
+    "goal": 15,
+    "goal_field_id": "fhnu3tto15h",
     "icon_code_point": 57997,
-    "id": "ac_hnsnhfu2oh2",
+    "id": "ac_hnu3u1mp3i5",
     "name": "Push-ups"
   },
   {
-    "accent_color": 4294210230,
+    "accent_color": 4289222135,
     "base_xp": 10,
-    "branch_id": "br_hnskeukkhu0",
-    "created_at": "2026-11-02T22:11:36.418794",
+    "branch_id": "br_hnu3sjq0cx3",
+    "created_at": "2026-11-03T22:49:19.344634",
     "description": "",
     "fields": [
       {
-        "id": "fhnsz3nc215",
-        "name": "Hours",
+        "id": "fhnu3uzg4rh",
+        "name": "Reps",
         "required": true,
-        "type": "duration",
-        "unit": "H"
+        "type": "number",
+        "unit": "Hours"
       }
     ],
+    "goal": 7,
+    "goal_field_id": "fhnu3uzg4rh",
     "icon_code_point": 57563,
-    "id": "ac_hnsz5b8lif2",
+    "id": "ac_hnu3vmusx87",
     "name": "Sleep"
   }
 ]

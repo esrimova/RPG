@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "activity_id": "ac_hnu3vmusx87",
+    "branch_id": "br_hnu3sjq0cx3",
+    "field_values": {
+      "fhnu3uzg4rh": 7.5
+    },
+    "goal": 7,
+    "id": "rc_hnugm9gv0x0",
+    "timestamp": "2026-11-04T06:31:30.833956",
+    "xp_earned": 11
+  }
+]
