@@ -1,6 +1,7 @@
 import 'goals.dart';
 import 'models.dart';
 import 'quests.dart';
+import 'stats.dart';
 
 /// Applies an operation to a snapshot with the same rules as
 /// `.github/scripts/audit_entity.py`, so the local view matches what GitHub will
@@ -81,6 +82,8 @@ ApplyResult applyOperation(Snapshot s, Operation op) {
       if (s.branches.any((o) => o.id != b.id && _norm(o.name) == _norm(b.name))) {
         return fail('A branch named "${b.name}" already exists');
       }
+      final costsError = levelCostsError(b.levelCosts);
+      if (costsError != null) return fail(costsError);
       final list = [...s.branches];
       if (i >= 0) {
         list[i] = b;
@@ -183,7 +186,35 @@ ApplyResult applyOperation(Snapshot s, Operation op) {
         list.add(q);
       }
       return ApplyResult(s.copyWith(quests: list));
+    case EntityType.stat:
+      final i = s.stats.indexWhere((e) => e.id == op.entityId);
+      if (op.action == OpAction.create && i >= 0) return fail('Stat entry already exists');
+      if (op.action != OpAction.create && i < 0) return fail('Stat entry does not exist');
+      if (op.action == OpAction.update) return fail('Stat entries can only be added or deleted');
+      if (op.action == OpAction.delete) {
+        return ApplyResult(s.copyWith(stats: s.stats.where((e) => e.id != op.entityId).toList()));
+      }
+      final StatEntry e;
+      try {
+        e = StatEntry.fromJson(op.payload);
+      } catch (_) {
+        return fail('Invalid stat entry');
+      }
+      final eError = statError(e);
+      if (eError != null) return fail(eError);
+      return ApplyResult(s.copyWith(stats: [...s.stats, e]));
   }
+}
+
+/// Same rules as `level_costs_error` in the validator. Null when valid (or absent).
+const maxLevelCosts = 200;
+
+String? levelCostsError(List<int>? costs) {
+  if (costs == null) return null;
+  if (costs.isEmpty) return 'Level points must be a non-empty list';
+  if (costs.length > maxLevelCosts) return 'At most $maxLevelCosts levels can be configured';
+  if (costs.any((c) => c <= 0)) return 'Every level needs a whole number of points greater than 0';
+  return null;
 }
 
 /// Re-applies pending operations over a base snapshot, silently skipping the

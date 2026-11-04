@@ -7,6 +7,7 @@ import 'icons.dart';
 import 'push_dialog.dart';
 import 'quests_page.dart' show questColor;
 import 'settings_page.dart';
+import 'stats_page.dart';
 import 'theme.dart';
 
 /// Home: overall progress, badges and the way into Configuration.
@@ -65,7 +66,7 @@ class HomePage extends ConsumerWidget {
         if (s.branches.isEmpty) const Text('No branches yet. Go back and create your first one.', style: TextStyle(color: Pal.muted)),
         for (final b in s.branches)
           Builder(builder: (_) {
-            final l = levelForXp(xpOf(s.records.where((r) => r.branchId == b.id)));
+            final l = levelForXp(xpOf(s.records.where((r) => r.branchId == b.id)), b.levelCosts);
             final color = Color(b.color);
             return ListTile(
               contentPadding: EdgeInsets.zero,
@@ -91,6 +92,7 @@ class HomePage extends ConsumerWidget {
           ),
         ],
         const SizedBox(height: 20),
+        _navTile(context, Icons.monitor_weight_outlined, 'Character stats', 'Weight, body fat, muscle and more, with history', const StatsPage()),
         _navTile(context, Icons.settings, 'Configuration', 'Branches, activities, fields and GitHub storage', const SettingsPage()),
       ]),
     );

@@ -18,7 +18,7 @@ on:
       entity_type:
         required: true
         type: choice
-        options: [branch, activity, record, quest]
+        options: [branch, activity, record, quest, stat]
       entity_id:
         required: true
         type: string
@@ -72,9 +72,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # quests.json only exists once a quest has been created
-          for f in branches.json activities.json records.json quests.json status; do
-            if [ -e "$f" ]; then git add -A "$f"; fi
+          # All game data lives in game/. Older repos kept the JSON files at the
+          # root; the script moves them into game/, so stage those deletions too.
+          git add -A game
+          for f in branches.json activities.json records.json quests.json; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then git add -A "$f"; fi
           done
           if git diff --cached --quiet; then
             echo "Nothing to commit"

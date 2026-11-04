@@ -745,7 +745,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('1/4 tasks'), findsOneWidget);
       expect(find.textContaining('+25 XP'), findsOneWidget);
-      expect(find.text('25 / 100 XP'), findsOneWidget); // Quests branch bar
+      expect(find.text('25 / 500 XP'), findsOneWidget); // Quests branch bar
       expect(c.state.view.quests.single.tasks.first.doneAt, isNotNull);
       // unchecking takes the share back
       await tester.tap(find.text('Task A'));
@@ -793,9 +793,9 @@ void main() {
       expect(find.text('Failed'), findsOneWidget);
       expect(find.text('100 XP'), findsOneWidget);
       expect(find.text('0 XP'), findsOneWidget);
-      // the failed quest's earned share does not count: 100 XP -> level 2, 0 / 200
-      expect(find.text('Level 2'), findsOneWidget);
-      expect(find.text('0 / 200 XP'), findsOneWidget);
+      // the failed quest's earned share does not count: 100 XP is still level 1 (500 to go)
+      expect(find.text('Level 1'), findsOneWidget);
+      expect(find.text('100 / 500 XP'), findsOneWidget);
       expect(find.byType(Checkbox), findsNothing);
       expect(find.byTooltip('Edit quest'), findsNothing);
       await tester.tap(find.byTooltip('Delete quest').last);

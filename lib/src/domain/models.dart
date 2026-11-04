@@ -58,6 +58,10 @@ class Branch {
   final int iconCodePoint;
   final DateTime createdAt;
 
+  /// XP needed for each level step of this branch (index 0 = level 1 -> 2).
+  /// Null means the default curve. See `levelCost` in progress.dart.
+  final List<int>? levelCosts;
+
   const Branch({
     required this.id,
     required this.name,
@@ -65,15 +69,25 @@ class Branch {
     required this.color,
     required this.iconCodePoint,
     required this.createdAt,
+    this.levelCosts,
   });
 
-  Branch copyWith({String? name, String? description, int? color, int? iconCodePoint}) => Branch(
+  Branch copyWith({
+    String? name,
+    String? description,
+    int? color,
+    int? iconCodePoint,
+    List<int>? levelCosts,
+    bool clearLevelCosts = false,
+  }) =>
+      Branch(
         id: id,
         name: name ?? this.name,
         description: description ?? this.description,
         color: color ?? this.color,
         iconCodePoint: iconCodePoint ?? this.iconCodePoint,
         createdAt: createdAt,
+        levelCosts: clearLevelCosts ? null : (levelCosts ?? this.levelCosts),
       );
 
   Map<String, dynamic> toJson() => {
@@ -83,6 +97,7 @@ class Branch {
         'accent_color': color,
         'icon_code_point': iconCodePoint,
         'created_at': createdAt.toIso8601String(),
+        if (levelCosts != null) 'level_costs': levelCosts,
       };
 
   factory Branch.fromJson(Map<String, dynamic> j) => Branch(
@@ -92,6 +107,7 @@ class Branch {
         color: (j['accent_color'] as num).toInt(),
         iconCodePoint: (j['icon_code_point'] as num).toInt(),
         createdAt: DateTime.tryParse(j['created_at'] as String? ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+        levelCosts: (j['level_costs'] as List?)?.map((e) => (e as num).toInt()).toList(),
       );
 }
 
@@ -219,6 +235,27 @@ class Record {
         xpEarned: (j['xp_earned'] as num?)?.toInt() ?? 0,
         notes: j['notes'] as String?,
         goal: (j['goal'] as num?)?.toDouble(),
+      );
+}
+
+/// One timestamped set of character stats (any subset of `statDefs`).
+class StatEntry {
+  final String id;
+  final DateTime timestamp;
+  final Map<String, num> values; // stat key -> value
+
+  const StatEntry({required this.id, required this.timestamp, required this.values});
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'timestamp': timestamp.toIso8601String(),
+        'values': values,
+      };
+
+  factory StatEntry.fromJson(Map<String, dynamic> j) => StatEntry(
+        id: j['id'] as String,
+        timestamp: DateTime.parse(j['timestamp'] as String),
+        values: {for (final e in Map<String, dynamic>.from(j['values'] as Map).entries) e.key: e.value as num},
       );
 }
 
@@ -362,12 +399,14 @@ class Snapshot {
   final List<Activity> activities;
   final List<Record> records;
   final List<Quest> quests;
+  final List<StatEntry> stats;
 
   const Snapshot({
     this.branches = const [],
     this.activities = const [],
     this.records = const [],
     this.quests = const [],
+    this.stats = const [],
   });
 
   static const empty = Snapshot();
@@ -377,12 +416,14 @@ class Snapshot {
     List<Activity>? activities,
     List<Record>? records,
     List<Quest>? quests,
+    List<StatEntry>? stats,
   }) =>
       Snapshot(
         branches: branches ?? this.branches,
         activities: activities ?? this.activities,
         records: records ?? this.records,
         quests: quests ?? this.quests,
+        stats: stats ?? this.stats,
       );
 
   List<Activity> activitiesOf(String branchId) => activities.where((a) => a.branchId == branchId).toList();
@@ -394,6 +435,7 @@ class Snapshot {
         'activities': activities.map((e) => e.toJson()).toList(),
         'records': records.map((e) => e.toJson()).toList(),
         'quests': quests.map((e) => e.toJson()).toList(),
+        'stats': stats.map((e) => e.toJson()).toList(),
       };
 
   static List<T> _list<T>(Object? raw, T Function(Map<String, dynamic>) f) {
@@ -413,19 +455,23 @@ class Snapshot {
         activities: _list(j['activities'], Activity.fromJson),
         records: _list(j['records'], Record.fromJson),
         quests: _list(j['quests'], Quest.fromJson),
+        stats: _list(j['stats'], StatEntry.fromJson),
       );
 
-  factory Snapshot.fromLists(Object? branches, Object? activities, Object? records, [Object? quests]) => Snapshot(
+  factory Snapshot.fromLists(Object? branches, Object? activities, Object? records,
+          [Object? quests, Object? stats]) =>
+      Snapshot(
         branches: _list(branches, Branch.fromJson),
         activities: _list(activities, Activity.fromJson),
         records: _list(records, Record.fromJson),
         quests: _list(quests, Quest.fromJson),
+        stats: _list(stats, StatEntry.fromJson),
       );
 }
 
 enum OpAction { create, update, delete }
 
-enum EntityType { branch, activity, record, quest }
+enum EntityType { branch, activity, record, quest, stat }
 
 /// One pending change that must reach the GitHub repository.
 class Operation {

@@ -167,6 +167,8 @@ class AppController extends StateNotifier<AppState> {
   Future<OpResult> saveQuest(Quest q, {required bool isNew}) =>
       submit(_op(isNew ? OpAction.create : OpAction.update, EntityType.quest, q.id, q.toJson()));
   Future<OpResult> deleteQuest(String id) => submit(_op(OpAction.delete, EntityType.quest, id, {'id': id}));
+  Future<OpResult> addStat(StatEntry e) => submit(_op(OpAction.create, EntityType.stat, e.id, e.toJson()));
+  Future<OpResult> deleteStat(String id) => submit(_op(OpAction.delete, EntityType.stat, id, {'id': id}));
 
   // ---- pushing ------------------------------------------------------
 
@@ -438,6 +440,7 @@ class AppController extends StateNotifier<AppState> {
           EntityType.activity, local.activities, (s) => s.activities, (a) => a.id, (a) => a.toJson());
       reconcile<Record>(EntityType.record, local.records, (s) => s.records, (r) => r.id, (r) => r.toJson());
       reconcile<Quest>(EntityType.quest, local.quests, (s) => s.quests, (q) => q.id, (q) => q.toJson());
+      reconcile<StatEntry>(EntityType.stat, local.stats, (s) => s.stats, (e) => e.id, (e) => e.toJson());
       final ops = [...state.ops, ...added];
       state = state.copyWith(base: remote, ops: ops);
       await _local.saveBase(remote);

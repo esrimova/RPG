@@ -13,9 +13,11 @@ order, each against the state left by the previous one; one bad operation never 
 the rest, and an operation_id that already has a status file is skipped (its stored
 status is reported), so a resend can never apply a change twice.
 
-Data lives in branches.json / activities.json / records.json / quests.json. The outcome of every
-operation is written to status/<operation_id>.json so the app can look up exactly
-the operation it started (PENDING = file not there yet).
+All game data lives in the game/ folder: branches.json / activities.json / records.json /
+quests.json / stats.json. (Older repos kept them at the repo root; they are read from there
+once and moved into game/ on the next save.) The outcome of every operation is written to
+game/status/<operation_id>.json so the app can look up exactly the operation it started
+(PENDING = file not there yet).
 Outcomes: SUCCESS, REJECTED (validation / duplicate), FAILED (unexpected error).
 """
 
@@ -31,8 +33,15 @@ from typing import Any, Dict, List, Optional
 OP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 MAX_STATUS_FILES = 500
 ACTIONS = ("create", "update", "delete")
+GAME_DIR = "game"
 FILES = {"branch": "branches.json", "activity": "activities.json", "record": "records.json",
-         "quest": "quests.json"}
+         "quest": "quests.json", "stat": "stats.json"}
+
+# Character stats the app records. Must match statDefs in lib/src/domain/stats.dart.
+# key -> max value (None = no upper limit). Percent stats cannot exceed 100.
+STAT_KEYS = {"weight": None, "fat": 100, "wat": 100, "msl": 100, "bon": None,
+             "calo": None, "pxfat": 100, "protein": 100, "bmi": None}
+MAX_LEVEL_COSTS = 200
 
 
 NUMERIC_TYPES = ("number", "duration")
@@ -167,6 +176,38 @@ def quest_error(q: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def level_costs_error(costs: Any) -> Optional[str]:
+    """level_costs: optional list of whole XP amounts > 0 (cost of level 1->2, 2->3, ...)."""
+    if costs is None:
+        return None
+    if not isinstance(costs, list) or not costs:
+        return "Level points must be a non-empty list"
+    if len(costs) > MAX_LEVEL_COSTS:
+        return f"At most {MAX_LEVEL_COSTS} levels can be configured"
+    for c in costs:
+        if not _is_num(c) or c != int(c) or c <= 0:
+            return "Every level needs a whole number of points greater than 0"
+    return None
+
+
+def stat_error(payload: Dict[str, Any]) -> Optional[str]:
+    """A stat entry: timestamp plus at least one known stat value (number >= 0)."""
+    if not _parses_iso(payload.get("timestamp")):
+        return "Stat entry needs a valid timestamp"
+    values = payload.get("values")
+    if not isinstance(values, dict) or not values:
+        return "Enter at least one stat"
+    for k, v in values.items():
+        if k not in STAT_KEYS:
+            return f"Unknown stat '{k}'"
+        if not _is_num(v) or not math.isfinite(v) or v < 0:
+            return f"Stat '{k}' must be a number of 0 or more"
+        mx = STAT_KEYS[k]
+        if mx is not None and v > mx:
+            return f"Stat '{k}' cannot be more than {mx}"
+    return None
+
+
 class EntityAuditor:
     def __init__(self, repo_root: str = "."):
         self.root = Path(repo_root)
@@ -174,13 +215,20 @@ class EntityAuditor:
         self.activities = self._load("activity")
         self.records = self._load("record")
         self.quests = self._load("quest")
+        self.stats = self._load("stat")
 
     # ---- persistence -------------------------------------------------
     def _path(self, etype: str) -> Path:
+        return self.root / GAME_DIR / FILES[etype]
+
+    def _legacy_path(self, etype: str) -> Path:
+        """Where older repos kept the file (repo root)."""
         return self.root / FILES[etype]
 
     def _load(self, etype: str) -> List[Dict[str, Any]]:
         p = self._path(etype)
+        if not p.exists():
+            p = self._legacy_path(etype)
         if not p.exists():
             return []
         try:
@@ -191,11 +239,16 @@ class EntityAuditor:
 
     def _save(self, etype: str) -> None:
         data = self._coll(etype)
-        self._path(etype).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        path = self._path(etype)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        legacy = self._legacy_path(etype)
+        if legacy.exists():
+            legacy.unlink()  # moved into game/
 
     def _coll(self, etype: str) -> List[Dict[str, Any]]:
         return {"branch": self.branches, "activity": self.activities,
-                "record": self.records, "quest": self.quests}[etype]
+                "record": self.records, "quest": self.quests, "stat": self.stats}[etype]
 
     # ---- validation --------------------------------------------------
     def _require(self, payload: Dict[str, Any], fields: List[str]) -> Optional[str]:
@@ -216,6 +269,9 @@ class EntityAuditor:
             for b in self.branches:
                 if b["id"] != eid and _norm(b.get("name")) == _norm(payload["name"]):
                     return f'A branch named "{payload["name"]}" already exists'
+            err = level_costs_error(payload.get("level_costs"))
+            if err:
+                return err
         elif etype == "activity":
             err = self._require(payload, ["id", "branch_id", "name", "accent_color", "icon_code_point"])
             if err:
@@ -241,6 +297,8 @@ class EntityAuditor:
                 return err
         elif etype == "quest":
             return self._validate_quest(eid, payload)
+        elif etype == "stat":
+            return stat_error(payload)
         elif etype == "record":
             err = self._require(payload, ["id", "activity_id", "branch_id", "timestamp"])
             if err:
@@ -317,6 +375,8 @@ class EntityAuditor:
                 return self._rej(f'{etype.capitalize()} "{eid}" already exists')
         elif idx < 0:
             return self._rej(f'{etype.capitalize()} "{eid}" does not exist')
+        if etype == "stat" and action == "update":
+            return self._rej("Stat entries can only be added or deleted")
 
         if action == "delete":
             if etype == "branch":
@@ -334,6 +394,9 @@ class EntityAuditor:
             elif etype == "quest":
                 self.quests = [q for q in self.quests if q["id"] != eid]
                 self._save("quest")
+            elif etype == "stat":
+                self.stats = [x for x in self.stats if x["id"] != eid]
+                self._save("stat")
             else:
                 self.records = [r for r in self.records if r["id"] != eid]
                 self._save("record")
@@ -365,7 +428,7 @@ class EntityAuditor:
 def write_status(root: Path, op_id: str, result: Dict[str, str], etype: str, eid: str, action: str) -> Path:
     if not OP_ID_RE.match(op_id or ""):
         raise ValueError("Invalid operation id")
-    d = Path(root) / "status"
+    d = Path(root) / GAME_DIR / "status"
     d.mkdir(parents=True, exist_ok=True)
     out = d / f"{op_id}.json"
     out.write_text(json.dumps({
@@ -405,7 +468,7 @@ def run_batch(root: Any, operations: List[Dict[str, Any]]) -> List[Dict[str, Any
             results.append({"operation_id": str(op_id), "status": "REJECTED",
                             "message": "Invalid operation id", "skipped": False})
             continue
-        stored = root / "status" / f"{op_id}.json"
+        stored = root / GAME_DIR / "status" / f"{op_id}.json"
         if stored.exists():
             try:
                 prev = json.loads(stored.read_text(encoding="utf-8"))

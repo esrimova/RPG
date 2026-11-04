@@ -258,12 +258,38 @@ void main() {
 
   group('progress', () {
     test('level thresholds', () {
+      // default curve: 500, then 250 more per level (500, 750, 1000, ...)
       expect(levelForXp(0).level, 1);
-      expect(levelForXp(99).level, 1);
-      expect(levelForXp(100).level, 2);
-      expect(levelForXp(299).level, 2);
-      expect(levelForXp(300).level, 3);
-      expect(levelForXp(100).xpIntoLevel, 0);
+      expect(levelForXp(499).level, 1);
+      expect(levelForXp(500).level, 2);
+      expect(levelForXp(1249).level, 2);
+      expect(levelForXp(1250).level, 3);
+      expect(levelForXp(500).xpIntoLevel, 0);
+      expect(levelForXp(500).xpForNext, 750);
+    });
+
+    test('a branch can set its own points per level, unequal and growing', () {
+      final costs = [500, 800, 1500];
+      expect(levelForXp(499, costs).level, 1);
+      expect(levelForXp(500, costs).level, 2);
+      expect(levelForXp(500, costs).xpForNext, 800);
+      expect(levelForXp(1299, costs).level, 2);
+      expect(levelForXp(1300, costs).level, 3);
+      expect(levelForXp(2799, costs).level, 3);
+      expect(levelForXp(2800, costs).level, 4);
+      // past the list every level costs the same as the last entry
+      expect(levelForXp(2800, costs).xpForNext, 1500);
+      expect(levelForXp(4300, costs).level, 5);
+      expect(levelForXp(1300, costs).xpIntoLevel, 0);
+    });
+
+    test('level costs are validated like the server does', () {
+      expect(levelCostsError(null), isNull);
+      expect(levelCostsError([500, 600]), isNull);
+      expect(levelCostsError([]), isNotNull);
+      expect(levelCostsError([500, 0]), isNotNull);
+      expect(levelCostsError([-1]), isNotNull);
+      expect(levelCostsError(List.filled(201, 5)), isNotNull);
     });
 
     test('streak counts consecutive days ending today or yesterday', () {

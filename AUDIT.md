@@ -16,4 +16,4 @@ Rewritten domain/data/state/UI (`lib/src`), new workflow + audit script with tes
 - Note: the repository is public. Anything the app uploads is visible to everyone; the app warns about this when you test the connection.
 
 ## Decision
-The in-app AI coach and AI settings were removed: an assistant reads the repo instead (`DATA_FORMAT.md`).
+The in-app AI coach and AI settings were removed: an assistant reads the repo instead (`game/DATA_FORMAT.md`).

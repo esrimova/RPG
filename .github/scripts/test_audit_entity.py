@@ -210,7 +210,7 @@ class AuditTest(unittest.TestCase):
 
     def test_status_file_written_per_operation(self):
         ae.write_status(self.root, "op-1", {"status": "SUCCESS", "message": "ok"}, "branch", "b1", "create")
-        data = json.loads((self.root / "status" / "op-1.json").read_text())
+        data = json.loads((self.root / "game" / "status" / "op-1.json").read_text())
         self.assertEqual(data["operation_id"], "op-1")
         self.assertEqual(data["status"], "SUCCESS")
 
@@ -260,7 +260,7 @@ class QuestAuditTest(unittest.TestCase):
     def test_create_and_persist(self):
         self.assertEqual(self.op("create", quest())["status"], "SUCCESS")
         self.assertEqual(len(ae.EntityAuditor(str(self.root)).quests), 1)
-        self.assertTrue((self.root / "quests.json").exists())
+        self.assertTrue((self.root / "game" / "quests.json").exists())
 
     def test_create_duplicate_and_update_missing(self):
         self.op("create", quest())
@@ -387,7 +387,7 @@ class BatchTest(unittest.TestCase):
         ]
         res = ae.run_batch(self.root, ops)
         self.assertEqual([r["status"] for r in res], ["SUCCESS"] * 3)
-        self.assertEqual(len(list((self.root / "status").glob("*.json"))), 3)
+        self.assertEqual(len(list((self.root / "game" / "status").glob("*.json"))), 3)
         a = ae.EntityAuditor(str(self.root))
         self.assertEqual((len(a.branches), len(a.activities), len(a.records)), (1, 1, 1))
 
@@ -401,7 +401,7 @@ class BatchTest(unittest.TestCase):
         self.assertEqual([r["status"] for r in res], ["REJECTED", "REJECTED", "SUCCESS"])
         a = ae.EntityAuditor(str(self.root))
         self.assertEqual((a.branches, a.activities, len(a.quests)), ([], [], 1))
-        self.assertEqual(len(list((self.root / "status").glob("*.json"))), 3)
+        self.assertEqual(len(list((self.root / "game" / "status").glob("*.json"))), 3)
 
     def test_each_op_sees_state_left_by_previous(self):
         ops = [
@@ -471,9 +471,110 @@ class BatchTest(unittest.TestCase):
         finally:
             os.environ.clear()
             os.environ.update(old)
-        data = json.loads((self.root / "status" / "s1.json").read_text())
+        data = json.loads((self.root / "game" / "status" / "s1.json").read_text())
         self.assertEqual(data["status"], "SUCCESS")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GameFolderTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def auditor(self):
+        return ae.EntityAuditor(str(self.root))
+
+    def test_data_is_written_inside_game_folder(self):
+        self.auditor().audit("create", "branch", "b1", branch())
+        self.assertTrue((self.root / "game" / "branches.json").exists())
+        self.assertFalse((self.root / "branches.json").exists())
+
+    def test_legacy_root_files_are_read_then_moved(self):
+        (self.root / "branches.json").write_text(json.dumps([branch()]), encoding="utf-8")
+        a = self.auditor()
+        self.assertEqual(len(a.branches), 1)
+        self.assertEqual(a.audit("create", "branch", "b2", branch("b2", "Mind"))["status"], "SUCCESS")
+        self.assertFalse((self.root / "branches.json").exists())
+        self.assertEqual(len(json.loads((self.root / "game" / "branches.json").read_text())), 2)
+
+
+class LevelCostsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.a = ae.EntityAuditor(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def op(self, costs):
+        b = branch()
+        if costs is not ...:
+            b["level_costs"] = costs
+        return self.a.audit("create", "branch", "b1", b)["status"]
+
+    def test_valid_and_absent(self):
+        self.assertEqual(self.op(...), "SUCCESS")
+
+    def test_valid_list(self):
+        self.assertEqual(self.op([500, 750, 1000]), "SUCCESS")
+
+    def test_invalid_lists(self):
+        for bad in ([], [0], [-5], [10.5], ["500"], [True], "500", [500] * 201):
+            self.setUp()
+            self.assertEqual(self.op(bad), "REJECTED", bad)
+
+
+class StatTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.a = ae.EntityAuditor(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def stat(self, id_="s1", values=None, ts="2026-11-04T08:30:00"):
+        return {"id": id_, "timestamp": ts, "values": values if values is not None else {"weight": 80.5, "fat": 18}}
+
+    def op(self, action, payload, eid="s1"):
+        return self.a.audit(action, "stat", eid, payload)
+
+    def test_create_persist_and_delete(self):
+        self.assertEqual(self.op("create", self.stat())["status"], "SUCCESS")
+        self.assertTrue((self.root / "game" / "stats.json").exists())
+        self.assertEqual(len(ae.EntityAuditor(self.tmp.name).stats), 1)
+        self.assertEqual(self.op("delete", {"id": "s1"})["status"], "SUCCESS")
+        self.assertEqual(ae.EntityAuditor(self.tmp.name).stats, [])
+
+    def test_duplicate_and_missing(self):
+        self.op("create", self.stat())
+        self.assertEqual(self.op("create", self.stat())["status"], "REJECTED")
+        self.assertEqual(self.op("delete", {"id": "zz"}, "zz")["status"], "REJECTED")
+
+    def test_update_not_allowed(self):
+        self.op("create", self.stat())
+        self.assertEqual(self.op("update", self.stat(values={"weight": 70}))["status"], "REJECTED")
+
+    def test_bad_entries_rejected(self):
+        bad = [
+            self.stat(values={}),
+            self.stat(values={"height": 180}),
+            self.stat(values={"weight": -1}),
+            self.stat(values={"weight": "80"}),
+            self.stat(values={"weight": True}),
+            self.stat(values={"fat": 101}),
+            self.stat(ts="not a date"),
+        ]
+        for i, p in enumerate(bad):
+            r = self.op("create", p, p["id"])
+            self.assertEqual(r["status"], "REJECTED", p)
+
+    def test_all_nine_stats(self):
+        v = {"weight": 80, "fat": 18, "wat": 55, "msl": 40, "bon": 3.1, "calo": 1800, "pxfat": 12, "protein": 17, "bmi": 24.2}
+        self.assertEqual(self.op("create", self.stat(values=v))["status"], "SUCCESS")

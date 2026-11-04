@@ -9,7 +9,9 @@ import '../state/providers.dart';
 import 'common.dart';
 import 'editors.dart';
 import 'home_page.dart';
+import 'history_tree.dart';
 import 'icons.dart';
+import 'level_costs_page.dart';
 import 'push_dialog.dart';
 import 'quests_page.dart';
 import 'settings_page.dart';
@@ -179,7 +181,7 @@ class _BranchPage extends ConsumerWidget {
     final branch = s.branches.where((b) => b.id == branchId).firstOrNull;
     if (branch == null) return const SizedBox.shrink();
     final acts = s.activitiesOf(branchId);
-    final lvl = levelForXp(xpOf(s.records.where((r) => r.branchId == branchId)));
+    final lvl = levelForXp(xpOf(s.records.where((r) => r.branchId == branchId)), branch.levelCosts);
     final color = Color(branch.color);
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
@@ -196,6 +198,11 @@ class _BranchPage extends ConsumerWidget {
               Text(branch.name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
               if (branch.description.isNotEmpty) Text(branch.description, style: const TextStyle(color: Pal.muted, fontSize: 13)),
             ]),
+          ),
+          IconButton(
+            tooltip: 'Level points',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => LevelCostsPage(branchId: branchId))),
+            icon: const Icon(Icons.tune, size: 20, color: Pal.muted),
           ),
           IconButton(onPressed: () => showBranchEditor(context, existing: branch), icon: const Icon(Icons.edit_outlined, size: 20, color: Pal.muted)),
         ]),
@@ -459,19 +466,8 @@ String formatValue(ActivityField f, Object? v) {
   }
 }
 
-void showHistory(BuildContext context, Activity a) {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Pal.surface,
-    builder: (_) => DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.6,
-      maxChildSize: 0.92,
-      builder: (ctx, scroll) => _HistorySheet(activityId: a.id, scroll: scroll),
-    ),
-  );
-}
+void showHistory(BuildContext context, Activity a) =>
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ActivityHistoryPage(activityId: a.id)));
 
 /// "`xp` XP · `pct`%" for a record made with a goal, measured against the goal
 /// stored on the record. Records keep no goal field id, so the activity's
@@ -486,48 +482,58 @@ String? _goalShare(Activity a, Record r) {
   return '${r.xpEarned} XP · ${(v / g * 100).round()}%';
 }
 
-class _HistorySheet extends ConsumerWidget {
-  const _HistorySheet({required this.activityId, required this.scroll});
+/// Every record of one activity, apart from where records are entered:
+/// grouped by year and month (each collapsible), with delete on each record.
+class ActivityHistoryPage extends ConsumerWidget {
+  const ActivityHistoryPage({super.key, required this.activityId});
   final String activityId;
-  final ScrollController scroll;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(appProvider.select((x) => x.view));
     final a = s.activities.where((x) => x.id == activityId).firstOrNull;
-    if (a == null) return const SizedBox.shrink();
+    if (a == null) return Scaffold(appBar: AppBar(), body: const SizedBox.shrink());
     final recs = s.recordsOfActivity(a.id);
     final imp = improvement(s, a);
-    return ListView(controller: scroll, padding: const EdgeInsets.all(16), children: [
-      Text(a.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-      const SizedBox(height: 4),
-      Text('${recs.length} ${recs.length == 1 ? 'record' : 'records'} · ${recs.fold<int>(0, (t, r) => t + r.xpEarned)} XP',
-          style: const TextStyle(color: Pal.muted)),
-      if (imp != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Text('${imp.fieldName}: ${imp.first} → ${imp.latest}', style: const TextStyle(color: Pal.green)),
-        ),
-      const Divider(height: 28),
-      if (recs.isEmpty) const Text('Nothing recorded yet.', style: TextStyle(color: Pal.muted)),
-      for (final r in recs)
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(a.fields.isEmpty ? 'Done' : a.fields.map((f) => '${f.name}: ${formatValue(f, r.values[f.id])}').join('   ')),
-          subtitle: Text([
-            DateFormat.yMMMd().add_Hm().format(r.timestamp.toLocal()),
-            ?_goalShare(a, r),
-          ].join(' · ')),
-          trailing: IconButton(
-            icon: const Icon(Icons.delete_outline, color: Pal.muted),
-            onPressed: () async {
-              if (await confirm(context, 'Delete record?', 'This removes the record and its ${r.xpEarned} XP.')) {
-                final res = await ref.read(appProvider.notifier).deleteRecord(r.id);
-                if (context.mounted && res.outcome == OpOutcome.rejected) toast(context, res.message, error: true);
-              }
-            },
+    String count(List<Record> l) =>
+        '${l.length} ${l.length == 1 ? 'record' : 'records'} · ${l.fold<int>(0, (t, r) => t + r.xpEarned)} XP';
+    return Scaffold(
+      appBar: AppBar(title: Text('${a.name} history')),
+      body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 32), children: [
+        const NoticeBanner(),
+        Text(count(recs), style: const TextStyle(color: Pal.muted)),
+        if (imp != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text('${imp.fieldName}: ${imp.first} → ${imp.latest}', style: const TextStyle(color: Pal.green)),
+          ),
+        const SizedBox(height: 14),
+        if (recs.isEmpty) const Text('Nothing recorded yet.', style: TextStyle(color: Pal.muted)),
+        HistoryTree<Record>(
+          items: recs,
+          timeOf: (r) => r.timestamp,
+          summary: count,
+          tileBuilder: (ctx, r) => ListTile(
+            key: ValueKey(r.id),
+            contentPadding: EdgeInsets.zero,
+            title: Text(a.fields.isEmpty ? 'Done' : a.fields.map((f) => '${f.name}: ${formatValue(f, r.values[f.id])}').join('   ')),
+            subtitle: Text([
+              DateFormat.MMMd().add_Hm().format(r.timestamp.toLocal()),
+              ?_goalShare(a, r),
+            ].join(' · ')),
+            trailing: IconButton(
+              tooltip: 'Delete record',
+              icon: const Icon(Icons.delete_outline, color: Pal.muted),
+              onPressed: () async {
+                if (await confirm(ctx, 'Delete record?', 'This removes the record and its ${r.xpEarned} XP.')) {
+                  final res = await ref.read(appProvider.notifier).deleteRecord(r.id);
+                  if (ctx.mounted && res.outcome == OpOutcome.rejected) toast(ctx, res.message, error: true);
+                }
+              },
+            ),
           ),
         ),
-    ]);
+      ]),
+    );
   }
 }

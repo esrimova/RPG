@@ -1,9 +1,11 @@
 # Data format (for any AI or script that reads this repo)
 
-The app keeps four JSON arrays at the repo root (`quests.json` appears once the first quest is pushed). They are the source of truth when GitHub storage is connected. Read them freely. To change data, send the same operations the app sends (see "Writing"), do not edit the files by hand.
+All game data lives in this `game/` folder, apart from the application code. The app keeps five JSON arrays here (`quests.json` and `stats.json` appear once the first quest or stats entry is pushed). They are the source of truth when GitHub storage is connected. Repositories created before this folder existed kept the files at the repo root: the app still reads them from there, and the workflow moves them into `game/` on the next push. Read them freely. To change data, send the same operations the app sends (see "Writing"), do not edit the files by hand.
 
 ## `branches.json` - areas of life
-`id`, `name`, `description`, `accent_color` (ARGB int), `icon_code_point`, `created_at` (ISO 8601).
+`id`, `name`, `description`, `accent_color` (ARGB int), `icon_code_point`, `created_at` (ISO 8601), and optional `level_costs`.
+
+`level_costs` is a list of whole numbers > 0 (at most 200): the XP needed to leave each level of this branch, in order. Entry 0 is the cost of level 1 -> 2, entry 1 of level 2 -> 3, and so on, and the amounts may differ freely (normally growing). Levels past the end of the list cost the same as the last entry. Absent means the default curve (see Derived numbers).
 
 ## `activities.json` - things you do inside a branch
 `id`, `branch_id`, `name`, `description`, `accent_color`, `icon_code_point`, `base_xp` (XP earned per record), `created_at`, and `fields`: the columns of that activity's table.
@@ -37,20 +39,37 @@ Derived quest status and points (never stored; computed with the local date of "
 - XP: active `floor(total_xp * checked / task_count)`; completed `total_xp`; failed `0` (shares earned along the way are lost).
 - Completed and failed quests are frozen: they accept only `delete`. A quest cannot be completed by removing tasks.
 
+## `stats.json` - character stats, one row per time they were measured
+`id`, `timestamp` (ISO 8601, set by the app when the entry is saved) and `values`: a map of stat key to number (>= 0). Any subset of the keys may be present, at least one:
+
+| key | stat | unit |
+|---|---|---|
+| `weight` | Weight | Kg |
+| `fat` | FAT | % (max 100) |
+| `wat` | WAT | % (max 100) |
+| `msl` | MSL | % (max 100) |
+| `bon` | BON | Kg |
+| `calo` | CALO | - |
+| `pxfat` | PXFAT | % (max 100) |
+| `protein` | Protein | % (max 100) |
+| `bmi` | BMI | - |
+
+Entries can only be created or deleted (a wrong one is deleted and entered again). They give no XP.
+
 ## Derived numbers (never stored; compute them from `records.json` and `quests.json`)
 - Total XP = sum of `xp_earned` + quest XP (above). A failed quest removes its points, so total XP and level can go down.
-- Going from level n to n+1 costs 100*n XP, so reaching level L takes 50*L*(L-1) XP in total.
+- Level costs: a branch with `level_costs` uses them (see `branches.json`). Everything else (the overall level and the Quests level) uses the default curve: level 1 -> 2 costs 500 XP and each following level costs 250 more (500, 750, 1000, ...).
 - Streak = consecutive calendar days with at least one record.
 - Badges are computed from the records by the app.
 
 ## Writing
 The app sends a `repository_dispatch` event of type `rpg_operation` only when the user presses **Push to GitHub**; nothing is pushed automatically. The `client_payload` holds an `operations` array, in order, of at most 25 operations (and about 48 KB serialized) per dispatch. Each operation:
 ```
-{"operation_id": "...", "action": "create|update|delete", "entity_type": "branch|activity|record|quest",
+{"operation_id": "...", "action": "create|update|delete", "entity_type": "branch|activity|record|quest|stat",
  "entity_id": "...", "payload": {...}, "local_date": "YYYY-MM-DD"}
 ```
 `local_date` is the user's local calendar date when the change was made. The validator uses it (never the runner's clock) to judge quest status, so a task checked on the last day and pushed later is still accepted.
 
-`.github/workflows/create_entity.yml` runs `.github/scripts/audit_entity.py`, which applies the operations one by one, each validated against the state left by the previous one (duplicate ids or names, missing branch, goal and quest rules, required fields). One rejected operation does not stop the rest. It writes one `status/<operation_id>.json` per operation with the outcome `SUCCESS`, `REJECTED` or `FAILED`, and one commit covers the batch. Operation ids are idempotent: an id that already has a status file is skipped and its stored status is reported, so a resend never applies a change twice. The manual `workflow_dispatch` path still takes a single operation. Hand-edits skip all validation.
+`.github/workflows/create_entity.yml` runs `.github/scripts/audit_entity.py`, which applies the operations one by one, each validated against the state left by the previous one (duplicate ids or names, missing branch, goal and quest rules, required fields). One rejected operation does not stop the rest. It writes one `game/status/<operation_id>.json` per operation with the outcome `SUCCESS`, `REJECTED` or `FAILED`, and one commit covers the batch. Operation ids are idempotent: an id that already has a status file is skipped and its stored status is reported, so a resend never applies a change twice. The manual `workflow_dispatch` path still takes a single operation. Hand-edits skip all validation.
 
 Privacy: this data is personal. Keep the repo private.

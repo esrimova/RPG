@@ -1,8 +1,22 @@
 import 'models.dart';
 import 'quests.dart';
 
-/// Level maths. Going from level n to n+1 costs 100*n XP, so reaching level L
-/// takes 50*L*(L-1) XP in total.
+/// Level maths. Each level has a cost: the XP needed to go from level n to n+1.
+///
+/// A branch may define its own list of costs ([Branch.levelCosts]): entry 0 is
+/// the cost of level 1 -> 2, entry 1 of level 2 -> 3, and so on. Levels past the
+/// end of the list cost the same as the last entry. Without a list (and for the
+/// overall and Quests levels) the default curve applies: 500 XP for level 1 -> 2,
+/// then 250 more for each following level.
+const defaultFirstLevelCost = 500;
+const defaultLevelStep = 250;
+
+/// XP needed to go from [level] to [level] + 1.
+int levelCost(int level, [List<int>? costs]) {
+  if (costs != null && costs.isNotEmpty) return level <= costs.length ? costs[level - 1] : costs.last;
+  return defaultFirstLevelCost + defaultLevelStep * (level - 1);
+}
+
 class LevelInfo {
   final int level;
   final int xpIntoLevel;
@@ -11,14 +25,14 @@ class LevelInfo {
   double get fraction => xpForNext == 0 ? 0 : xpIntoLevel / xpForNext;
 }
 
-LevelInfo levelForXp(int totalXp) {
+LevelInfo levelForXp(int totalXp, [List<int>? costs]) {
   var level = 1;
   var remaining = totalXp < 0 ? 0 : totalXp;
-  while (remaining >= level * 100) {
-    remaining -= level * 100;
+  while (remaining >= levelCost(level, costs)) {
+    remaining -= levelCost(level, costs);
     level++;
   }
-  return LevelInfo(level, remaining, level * 100);
+  return LevelInfo(level, remaining, levelCost(level, costs));
 }
 
 DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);

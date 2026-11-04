@@ -58,7 +58,7 @@ abstract class RemoteStore {
   /// does not exist yet.
   Future<OpResult> status(String operationId);
 
-  /// Reads branches.json / activities.json / records.json / quests.json.
+  /// Reads the game data files (branches, activities, records, quests, stats).
   Future<Snapshot> pull();
 
   /// Verifies token, repository access and workflow installation.
@@ -72,6 +72,10 @@ class RemoteException implements Exception {
   @override
   String toString() => message;
 }
+
+/// Folder of the data repository that holds all game data. Everything outside
+/// it (and `.github`) is the application.
+const gameDir = 'game';
 
 class GithubRemoteStore implements RemoteStore {
   GithubRemoteStore({required this.repo, required String pat, Dio? dio})
@@ -131,7 +135,7 @@ class GithubRemoteStore implements RemoteStore {
   @override
   Future<OpResult> status(String operationId) async {
     try {
-      final r = await _dio.get('/repos/$repo/contents/status/$operationId.json',
+      final r = await _dio.get('/repos/$repo/contents/$gameDir/status/$operationId.json',
           options: Options(headers: {'Accept': 'application/vnd.github.raw+json'}, responseType: ResponseType.json));
       if (r.statusCode == 404) return const OpResult(OpOutcome.pending, 'Waiting for GitHub Actions…');
       if (r.statusCode != 200) throw RemoteException(_explain(r, 'reading the result'));
@@ -152,9 +156,14 @@ class GithubRemoteStore implements RemoteStore {
     }
   }
 
+  Future<Response> _get(String path) => _dio.get('/repos/$repo/contents/$path',
+      options: Options(headers: {'Accept': 'application/vnd.github.raw+json'}, responseType: ResponseType.json));
+
+  /// Reads `game/<file>`. Repositories created before the `game/` folder kept
+  /// the file at the root: that copy is used until the workflow moves it.
   Future<Object?> _readJson(String file) async {
-    final r = await _dio.get('/repos/$repo/contents/$file',
-        options: Options(headers: {'Accept': 'application/vnd.github.raw+json'}, responseType: ResponseType.json));
+    var r = await _get('$gameDir/$file');
+    if (r.statusCode == 404) r = await _get(file);
     if (r.statusCode == 404) return const [];
     if (r.statusCode != 200) throw RemoteException(_explain(r, 'reading $file'));
     return r.data;
@@ -167,7 +176,8 @@ class GithubRemoteStore implements RemoteStore {
       final a = await _readJson('activities.json');
       final rec = await _readJson('records.json');
       final q = await _readJson('quests.json');
-      return Snapshot.fromLists(b, a, rec, q);
+      final st = await _readJson('stats.json');
+      return Snapshot.fromLists(b, a, rec, q, st);
     } on DioException catch (e) {
       _net(e, 'downloading your data');
     }

@@ -8,6 +8,7 @@ import '../state/providers.dart';
 import 'common.dart';
 import 'editors.dart';
 import 'icons.dart';
+import 'level_costs_page.dart';
 import 'push_dialog.dart';
 import 'theme.dart';
 
@@ -80,6 +81,9 @@ class _StructureSection extends ConsumerWidget {
                       onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ActivityEditorPage(branchId: b.id))),
                       icon: const Icon(Icons.add),
                       label: const Text('Add activity')),
+                  TextButton(
+                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => LevelCostsPage(branchId: b.id))),
+                      child: const Text('Level points')),
                   TextButton(onPressed: () => showBranchEditor(context, existing: b), child: const Text('Edit branch')),
                   TextButton(
                     onPressed: () async {
