@@ -31,5 +31,16 @@
     "id": "rc_hnvkabj0t00",
     "timestamp": "2026-11-05T06:30:39.993303",
     "xp_earned": 10
+  },
+  {
+    "activity_id": "ac_hnu3vmusx87",
+    "branch_id": "br_hnu3sjq0cx3",
+    "field_values": {
+      "fhnu3uzg4rh": 15
+    },
+    "goal": 7,
+    "id": "rc_hnvuc842l10",
+    "timestamp": "2026-11-05T12:35:23.012648",
+    "xp_earned": 21
   }
 ]
